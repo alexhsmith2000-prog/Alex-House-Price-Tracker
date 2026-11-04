@@ -130,30 +130,221 @@
     return 'house';
   }
 
-  function decode(json) {
+  // Two sources, merged: data/sales.json published with the app (if any), and files the user
+  // imports on the phone (kept in IndexedDB).
+  let SERVER = [], SERVER_GENERATED = null;
+  let LOCAL = { records: {}, files: [], updated: null };
+
+  function decodeServer(json) {
     const L = json.localities, Z = json.zones, P = json.purposes, St = json.streets;
+    SERVER = json.sales.map(([d, li, price, area, zi, nature, pi, strata, si]) => ({
+      d, loc: L[li][0], pc: L[li][1], price, area, zone: Z[zi] || '', nature: nature || '', purpose: P[pi] || '', strata: !!strata, street: St[si] || '',
+    }));
+    SERVER_GENERATED = json.generated;
+  }
+
+  function rebuildSales() {
+    const seen = new Set(), dealings = new Set(), list = [];
+    const add = (s) => {
+      const sig = `${s.d}|${s.loc}|${s.price}|${s.street}`;
+      if (seen.has(sig)) return;
+      seen.add(sig);
+      const ds = String(s.d);
+      s.m = `${ds.slice(0, 4)}-${ds.slice(4, 6)}`;
+      s.type = classify(s);
+      list.push(s);
+    };
+    for (const r of Object.values(LOCAL.records)) {
+      const [d, loc, pc, price, area, zone, nature, purpose, strata, street, , dealing] = r;
+      if (dealing) { const dk = `${dealing}|${price}`; if (dealings.has(dk)) continue; dealings.add(dk); } // one dealing, several lots
+      add({ d, loc, pc, price, area, zone, nature, purpose, strata: !!strata, street });
+    }
+    for (const s of SERVER) add({ ...s });
+    SALES = list;
     LOC_COUNTS = new Map();
     let latest = 0;
-    SALES = json.sales.map((r) => {
-      const [d, li, price, area, zi, nature, pi, strata, si] = r;
-      const [loc, pc] = L[li];
-      const ds = String(d);
-      const s = { d, m: `${ds.slice(0, 4)}-${ds.slice(4, 6)}`, loc, pc, price, area, zone: Z[zi] || '', nature: nature || '', purpose: P[pi] || '', strata: !!strata, street: St[si] || '' };
-      s.type = classify(s);
-      if (d > latest) latest = d;
-      const c = LOC_COUNTS.get(loc) || { pc, n: 0 }; c.n++; LOC_COUNTS.set(loc, c);
-      return s;
-    });
-    DATA_INFO = { generated: json.generated, latest };
+    for (const s of list) {
+      if (s.d > latest) latest = s.d;
+      const c = LOC_COUNTS.get(s.loc) || { pc: s.pc, n: 0 }; c.n++; LOC_COUNTS.set(s.loc, c);
+    }
+    const gens = [SERVER_GENERATED, LOCAL.updated].filter(Boolean).sort();
+    DATA_INFO = list.length ? { generated: gens[gens.length - 1], latest } : null;
   }
 
   async function loadSales() {
+    const stored = await idbGet('local-sales');
+    if (stored && stored.records) LOCAL = stored;
     try {
       const res = await fetch('data/sales.json', { cache: 'no-cache' });
-      if (!res.ok) throw new Error(res.status);
-      decode(await res.json());
-    } catch { SALES = []; DATA_INFO = null; }
+      if (res.ok) decodeServer(await res.json());
+    } catch { /* no published data: fine */ }
+    rebuildSales();
     render();
+  }
+
+  // ---------- IndexedDB (imported sales can be a few MB: too big for localStorage) ----------
+  let dbPromise;
+  const idb = () => dbPromise || (dbPromise = new Promise((res, rej) => {
+    const r = indexedDB.open('nr-prices', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  }));
+  async function idbGet(k) {
+    try {
+      const db = await idb();
+      return await new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+    } catch { return undefined; }
+  }
+  async function idbSet(k, v) {
+    const db = await idb();
+    return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
+  }
+
+  // ---------- reading NSW Valuer General zip files on the phone ----------
+  const POSTCODES = new Set(['2469', '2470', '2471', '2472', '2473', '2474', '2475', '2476', '2477', '2478', '2479', '2480']);
+  const VG_BASE = 'https://www.valuergeneral.nsw.gov.au/__psi';
+
+  function* zipEntries(buf) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let eocd = -1;
+    for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) throw new Error('not a zip file');
+    let count = dv.getUint16(eocd + 10, true), cd = dv.getUint32(eocd + 16, true);
+    if ((cd === 0xffffffff || count === 0xffff) && eocd >= 20 && dv.getUint32(eocd - 20, true) === 0x07064b50) { // ZIP64
+      const z = Number(dv.getBigUint64(eocd - 12, true));
+      count = Number(dv.getBigUint64(z + 32, true)); cd = Number(dv.getBigUint64(z + 48, true));
+    }
+    let p = cd;
+    for (let i = 0; i < count && dv.getUint32(p, true) === 0x02014b50; i++) {
+      const method = dv.getUint16(p + 10, true);
+      let csize = dv.getUint32(p + 20, true);
+      const usize = dv.getUint32(p + 24, true);
+      const nlen = dv.getUint16(p + 28, true), elen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+      let off = dv.getUint32(p + 42, true);
+      const name = new TextDecoder().decode(buf.subarray(p + 46, p + 46 + nlen));
+      if (csize === 0xffffffff || off === 0xffffffff) {
+        for (let e = p + 46 + nlen; e < p + 46 + nlen + elen;) {
+          const id = dv.getUint16(e, true), sz = dv.getUint16(e + 2, true);
+          if (id === 1) {
+            let q = e + 4;
+            if (usize === 0xffffffff) q += 8;
+            if (csize === 0xffffffff) { csize = Number(dv.getBigUint64(q, true)); q += 8; }
+            if (off === 0xffffffff) off = Number(dv.getBigUint64(q, true));
+          }
+          e += 4 + sz;
+        }
+      }
+      p += 46 + nlen + elen + clen;
+      if (name.endsWith('/')) continue;
+      const start = off + 30 + dv.getUint16(off + 26, true) + dv.getUint16(off + 28, true);
+      yield { name, method, data: buf.subarray(start, start + csize) };
+    }
+  }
+  async function inflate(entry) {
+    if (entry.method === 0) return entry.data;
+    if (entry.method !== 8) throw new Error('unsupported compression');
+    const stream = new Blob([entry.data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  // 'B' records, post-2001 Valuer General format (semicolon separated)
+  function parseDat(text, out) {
+    let n = 0;
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.startsWith('B;')) continue;
+      const f = line.split(';');
+      if (f.length < 24) continue;
+      const pc = f[10].trim();
+      if (!POSTCODES.has(pc)) continue;
+      const price = parseInt(f[15], 10);
+      const contract = f[13].trim() || f[14].trim();
+      if (!price || !/^\d{8}$/.test(contract)) continue;
+      const a = parseFloat(f[11]);
+      const area = isFinite(a) ? Math.round(a * (f[12].trim().toUpperCase() === 'H' ? 10000 : 1)) : null;
+      const key = `${f[1].trim()}|${f[2].trim()}|${f[3].trim()}|${contract}`;
+      const rec = [+contract, f[9].trim().toUpperCase(), pc, price, area, f[16].trim().toUpperCase(), f[17].trim().toUpperCase().slice(0, 1),
+        f[18].trim().toUpperCase(), f[19].trim() ? 1 : 0, f[8].trim().toUpperCase(), f[4].trim(), f[23].trim()];
+      const old = out[key];
+      if (!old || rec[10] >= old[10]) { out[key] = rec; n++; }
+    }
+    return n;
+  }
+
+  const fileId = (name) => { const m = String(name).match(/(\d{8}|\d{4})(?:\s*\d*)?\.zip$/i); return m ? (m[1].length === 8 ? `weekly/${m[1]}` : `yearly/${m[1]}`) : null; };
+
+  async function importZipFiles(fileList) {
+    const files = [...fileList];
+    if (!files.length) return;
+    if (typeof DecompressionStream === 'undefined') { toast('This phone’s browser is too old to unzip files (needs iOS 16.4 or later).'); return; }
+    const latin1 = new TextDecoder('iso-8859-1');
+    const done = new Set(LOCAL.files);
+    let added = 0, ok = 0;
+    const bad = [];
+    const walk = async (buf, label) => {
+      for (const entry of zipEntries(buf)) {
+        const lower = entry.name.toLowerCase();
+        if (lower.endsWith('.zip')) {
+          await walk(await inflate(entry), entry.name);
+          const id = fileId(entry.name); if (id) done.add(id);
+        } else if (lower.endsWith('.dat')) {
+          added += parseDat(latin1.decode(await inflate(entry)), LOCAL.records);
+        }
+      }
+    };
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      toast(`Reading ${f.name} (${i + 1} of ${files.length})…`);
+      try {
+        await walk(new Uint8Array(await f.arrayBuffer()), f.name);
+        const id = fileId(f.name); if (id) done.add(id);
+        ok++;
+      } catch (e) { bad.push(f.name); console.warn(f.name, e); }
+    }
+    LOCAL.files = [...done].sort();
+    LOCAL.updated = new Date().toISOString();
+    try { await idbSet('local-sales', LOCAL); } catch { toast('Could not save the imported sales on this phone.'); return; }
+    rebuildSales(); render(); renderImportStatus();
+    toast(`Imported ${ok} file${ok === 1 ? '' : 's'}: ${added.toLocaleString('en-AU')} Northern Rivers sales${bad.length ? ` · ${bad.length} skipped (not a sales file — that week may not be published yet)` : ''}`);
+  }
+
+  const mondaysOf = (year, until) => {
+    const out = [];
+    for (let d = new Date(Date.UTC(year, 0, 1)); d <= until && d.getUTCFullYear() === year; d.setUTCDate(d.getUTCDate() + 1)) {
+      if (d.getUTCDay() === 1) out.push(d.toISOString().slice(0, 10).replace(/-/g, ''));
+    }
+    return out;
+  };
+  // every file not yet imported: yearly files for past years, weekly files for this year
+  function missingFiles() {
+    const have = new Set(LOCAL.files);
+    const now = new Date();
+    const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+    const year = today.getUTCFullYear();
+    const urls = [];
+    for (let y = 2024; y < year; y++) {
+      if (have.has(`yearly/${y}`)) continue;
+      // early in a new year the yearly file may not be out yet: fall back to its weekly files
+      if (today.getUTCMonth() === 0 && y === year - 1) { for (const w of mondaysOf(y, today)) if (!have.has(`weekly/${w}`)) urls.push(`${VG_BASE}/weekly/${w}.zip`); continue; }
+      urls.push(`${VG_BASE}/yearly/${y}.zip`);
+    }
+    for (const w of mondaysOf(year, today)) if (!have.has(`weekly/${w}`)) urls.push(`${VG_BASE}/weekly/${w}.zip`);
+    return urls;
+  }
+
+  function renderImportStatus() {
+    const box = $('#importStatus'); if (!box) return;
+    const n = Object.keys(LOCAL.records).length;
+    const weeks = LOCAL.files.filter((f) => f.startsWith('weekly/')).sort();
+    const years = LOCAL.files.filter((f) => f.startsWith('yearly/')).map((f) => f.slice(7));
+    const missing = missingFiles();
+    box.textContent = n
+      ? `${n.toLocaleString('en-AU')} sales imported on this phone${years.length ? ` · years ${years.join(', ')}` : ''}${weeks.length ? ` · latest week ${fmtDate(weeks[weeks.length - 1].slice(7))}` : ''}. ${missing.length ? `${missing.length} file${missing.length === 1 ? '' : 's'} still to download.` : 'Up to date.'}`
+      : `No sales imported yet. ${missing.length} files to download to build your history (see the steps below).`;
+    const latest = missing.filter((u) => u.includes('/weekly/')).pop();
+    const link = $('#latestFileLink');
+    link.hidden = !latest;
+    if (latest) { link.href = latest; link.textContent = `Download week of ${fmtDate(latest.match(/(\d{8})\.zip/)[1])}`; }
   }
 
   const matcher = (v) => {
@@ -191,7 +382,7 @@
 
   function renderHeader() {
     const h = $('#lastUpdated');
-    if (!DATA_INFO) { h.textContent = 'Sold-price data not downloaded yet'; return; }
+    if (!DATA_INFO) { h.textContent = 'No sold-price data imported yet'; return; }
     const g = new Date(DATA_INFO.generated);
     h.textContent = `${SALES.length.toLocaleString('en-AU')} sales · latest ${fmtDate(DATA_INFO.latest)} · updated ${g.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`;
   }
@@ -260,8 +451,9 @@
     const box = $('#statCards'); box.replaceChildren();
     if (!SALES.length) {
       box.className = 'cards compare';
-      box.append(el('div', { class: 'card wide' }, el('div', { class: 'label' }, 'Sold prices'),
-        el('div', { class: 'delta' }, 'Sold prices download automatically once the daily update has run. Listing prices you add yourself show on the chart in the meantime.')));
+      box.append(el('div', { class: 'card wide' }, el('div', { class: 'label' }, 'No sold prices yet'),
+        el('div', { class: 'delta' }, 'Import the NSW Valuer General sales files your iPhone Shortcut downloads.'),
+        el('button', { class: 'primary', style: 'margin-top:10px', onclick: () => { renderImportStatus(); $('#menuDialog').showModal(); } }, 'Import sales files')));
       return;
     }
     const end = addMonths(thisMonth(), -1);
@@ -583,7 +775,22 @@
 
   // ---------- menu: import / export ----------
   const menu = $('#menuDialog');
-  $('#menuBtn').addEventListener('click', () => menu.showModal());
+  $('#menuBtn').addEventListener('click', () => { renderImportStatus(); menu.showModal(); });
+  $('#importZip').addEventListener('change', async (ev) => { const files = ev.target.files; await importZipFiles(files); ev.target.value = ''; });
+  $('#copyList').addEventListener('click', async () => {
+    const list = missingFiles();
+    if (!list.length) return toast('Nothing to download: you are up to date');
+    const text = list.join('\n');
+    try { await navigator.clipboard.writeText(text); toast(`Copied ${list.length} download links. Now run the “NR Prices catch-up” shortcut.`); }
+    catch { const ta = $('#copyFallback'); ta.hidden = false; ta.value = text; ta.select(); toast('Select all and copy the links below'); }
+  });
+  $('#clearImported').addEventListener('click', async () => {
+    if (!Object.keys(LOCAL.records).length) return toast('No imported sales to delete');
+    if (!confirm('Delete all sales imported on this phone? You can import the files again later.')) return;
+    LOCAL = { records: {}, files: [], updated: null };
+    try { await idbSet('local-sales', LOCAL); } catch { /* ignore */ }
+    rebuildSales(); render(); renderImportStatus(); toast('Imported sales deleted');
+  });
   $('#closeMenu').addEventListener('click', () => menu.close());
   function download(name, text, type) {
     const a = el('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name });

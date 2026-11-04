@@ -125,8 +125,53 @@
   <!-- Data menu -->
   <dialog id="menuDialog">
     <div class="menu">
-      <h2>Your data</h2>
-      <p class="hint">Sold prices come from the NSW Valuer General's public sales records. Your saved searches and listing prices are stored on this phone only, so export a backup now and then.</p>
+      <h2>Sold prices</h2>
+      <p class="hint" id="importStatus"></p>
+      <label class="primary block file">Import sales files (.zip)
+        <input type="file" id="importZip" accept=".zip,application/zip" multiple>
+      </label>
+      <a class="ghost block linkbtn" id="latestFileLink" href="#" hidden>Download this week’s file</a>
+      <button class="ghost block" id="copyList">Copy links of files still to download</button>
+      <textarea id="copyFallback" rows="4" hidden readonly></textarea>
+      <details>
+        <summary>Set up the iPhone Shortcuts (one-off, about 5 minutes)</summary>
+        <div class="steps">
+          <p class="hint">The NSW Valuer General publishes a sales file every Monday. These two shortcuts download the files into a folder in the Files app. You then tap <b>Import sales files</b> above and select everything in that folder. Files already imported are merged, not doubled up.</p>
+          <p class="hint"><b>First, in the Files app:</b> open iCloud Drive › Shortcuts and create a folder called <b>NR Prices</b>.</p>
+
+          <h3>1. “NR Prices weekly” (downloads each new week automatically)</h3>
+          <p class="hint">In the Shortcuts app, tap <b>+</b>, name it <i>NR Prices weekly</i>, and add these actions in order:</p>
+          <ol>
+            <li><b>Date</b>, set to <i>Current Date</i>.</li>
+            <li><b>Adjust Date</b>: <i>Subtract 1 day</i> from the date. (The automation runs on Tuesdays, so this gives Monday.)</li>
+            <li><b>Format Date</b>: Date Format <i>Custom</i>, format string <code>yyyyMMdd</code>.</li>
+            <li><b>Text</b>: <code>https://www.valuergeneral.nsw.gov.au/__psi/weekly/</code> then insert the <i>Formatted Date</i> variable, then <code>.zip</code>.</li>
+            <li><b>Get Contents of URL</b>, using the Text.</li>
+            <li><b>Set Name</b> of the Contents of URL to <i>Formatted Date</i> followed by <code>.zip</code>.</li>
+            <li><b>Save File</b>: turn <i>Ask Where to Save</i> off and set the folder to <i>Shortcuts/NR Prices</i>.</li>
+            <li><b>Show Notification</b>: “New sales file ready. Open NR Prices and import it.”</li>
+          </ol>
+          <p class="hint">Then go to the <b>Automation</b> tab › <b>+</b> › <b>Time of Day</b>: 7:00 am, <i>Weekly</i>, <i>Tuesday</i>, choose <i>Run Immediately</i>, and pick <i>NR Prices weekly</i>.</p>
+
+          <h3>2. “NR Prices catch-up” (builds the history, and fills in missed weeks)</h3>
+          <ol>
+            <li><b>Get Clipboard</b>.</li>
+            <li><b>Split Text</b> by <i>New Lines</i>.</li>
+            <li><b>Repeat with Each</b> item in Split Text, and inside the repeat:
+              <ol>
+                <li><b>Get Contents of URL</b>, using the <i>Repeat Item</i>.</li>
+                <li><b>Save File</b>: <i>Ask Where to Save</i> off, folder <i>Shortcuts/NR Prices</i>.</li>
+              </ol>
+            </li>
+          </ol>
+          <p class="hint">To use it, tap <b>Copy links of files still to download</b> above, then run <i>NR Prices catch-up</i>. The first time, this downloads the 2024 and 2025 yearly files (large: use Wi-Fi) plus every week so far this year.</p>
+          <p class="hint">If a shortcut saves a file the app can't read, that week usually just isn't published yet. The app skips it.</p>
+        </div>
+      </details>
+      <button class="ghost danger block" id="clearImported">Delete imported sales</button>
+      <hr>
+      <h2>Your searches and listing prices</h2>
+      <p class="hint">Stored on this phone only, so export a backup now and then.</p>
       <button class="primary block" id="exportJson">Export backup (searches + listing prices)</button>
       <button class="ghost block" id="exportSales">Export this search's sales (CSV)</button>
       <button class="ghost block" id="exportCsv">Export listing prices (CSV)</button>

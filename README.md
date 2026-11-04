@@ -25,18 +25,26 @@ the Northern Rivers postcodes (2469–2480) from 2024 onwards and writes `data/s
 
 Sales take about 4–8 weeks to appear in the records, so the last two months are marked as incomplete.
 
-### Updating the data
+### Updating the data (from your iPhone)
 
-The Valuer General's server currently **refuses downloads from GitHub's servers** (HTTP 403), so the
-GitHub workflow can't fetch the data on its own. Its daily schedule is switched off for now. Instead, run
-the script from your own computer (Python 3 only, nothing to install):
+The Valuer General's server refuses downloads from GitHub's servers, and a web app can't fetch
+files from another site in the background. So the files are downloaded by **iPhone Shortcuts**
+and then imported into the app:
 
-```
-python3 scripts/fetch_sales.py
-git add data && git commit -m "Update sales data" && git push
-```
+1. A **"NR Prices weekly"** shortcut runs automatically every Tuesday morning. It downloads Monday's
+   sales file into Files › iCloud Drive › Shortcuts › NR Prices.
+2. A **"NR Prices catch-up"** shortcut downloads any list of files. The app's **⋯ → Copy links of files
+   still to download** button puts the right list on the clipboard. Use it the first time to build the
+   history (the 2024 and 2025 yearly files plus this year's weeks) and whenever you've missed some weeks.
+3. In the app, **⋯ → Import sales files**, then select the files in that folder. The app unzips them
+   on the phone, keeps only Northern Rivers sales and merges them. Importing a file twice does no harm.
 
-Pushing publishes the update to the app. After the first run, each run only downloads the new weekly files.
+Step-by-step instructions for building both shortcuts are in the app under
+**⋯ → Set up the iPhone Shortcuts**. Imported sales are stored on the phone (IndexedDB).
+
+On a computer you can instead run `python3 scripts/fetch_sales.py`, which writes `data/sales.json`.
+Pushing that file publishes it to everyone who uses the app, and the app merges it with anything
+imported on the phone.
 
 ## Put it on your phone
 
@@ -55,4 +63,4 @@ and a daily run uses about 1–2 minutes. The Valuer General data is free.
 
 `index.html`, `styles.css`, `app.js` make up the app (plain HTML/CSS/JS, no build step). `sw.js` and
 `manifest.webmanifest` provide offline use and home-screen install (bump `VERSION` in `sw.js` after changing
-app files). `scripts/fetch_sales.py` is the data downloader. `data/` holds the sales data.
+app files). `scripts/fetch_sales.py` is a computer-side downloader (optional). `data/` holds the sales data.
