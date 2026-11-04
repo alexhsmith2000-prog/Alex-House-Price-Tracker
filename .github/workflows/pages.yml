@@ -1,24 +1,58 @@
-name: Deploy to GitHub Pages
+name: Update sales data and deploy
+
 on:
+  schedule:
+    - cron: "17 19 * * *"   # daily, ~5:17am Sydney time
+  workflow_dispatch:
   push:
     branches: [main, claude/northern-rivers-housing-tracker-yj20s8]
-  workflow_dispatch:
+    paths-ignore: ["data/**", "README.md"]
+
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
+
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: update-and-deploy
+  cancel-in-progress: false
+
 jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch NSW Valuer General sales
+        run: python scripts/fetch_sales.py
+      - name: Commit new data
+        run: |
+          if git diff --quiet -- data/sales_db.csv.gz && git ls-files --error-unmatch data/sales_db.csv.gz >/dev/null 2>&1; then
+            echo "No new sales data."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          git commit -m "Update sales data $(date -u +%F)"
+          git push
+
   deploy:
+    needs: update-data
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}   # includes the data commit made above
       - uses: actions/configure-pages@v5
+      - name: Remove files the app does not need
+        run: rm -rf .github scripts data/sales_db.csv.gz
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
