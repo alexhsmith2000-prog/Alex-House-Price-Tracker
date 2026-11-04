@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Northern Rivers Prices</title>
+  <meta name="description" content="Track monthly listing, sold and median house prices in Casino, Lismore, Evans Head and Ballina.">
+  <meta name="theme-color" content="#0f6b5c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="NR Prices">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Northern Rivers Prices</h1>
+      <p class="sub" id="lastUpdated">No data yet</p>
+    </div>
+    <button class="icon-btn" id="menuBtn" aria-label="Data and settings">⋯</button>
+  </header>
+
+  <nav class="chips" id="suburbChips" aria-label="Suburb"></nav>
+
+  <main>
+    <section class="cards" id="statCards" aria-live="polite"></section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div class="seg" id="metricSeg" role="tablist" aria-label="Metric"></div>
+        <div class="seg small" id="rangeSeg" role="tablist" aria-label="Range"></div>
+      </div>
+      <div id="chart" class="chart"></div>
+      <div id="legend" class="legend"></div>
+    </section>
+
+    <section class="panel" id="gapPanel" hidden></section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2 id="tableTitle">Monthly figures</h2>
+      </div>
+      <div class="table-wrap">
+        <table id="table"></table>
+      </div>
+    </section>
+  </main>
+
+  <button class="fab" id="addBtn" aria-label="Add monthly figures">+ Add month</button>
+
+  <!-- Add / edit entry -->
+  <dialog id="entryDialog">
+    <form method="dialog" id="entryForm">
+      <h2 id="entryTitle">Add monthly figures</h2>
+      <label>Suburb
+        <select name="suburb" required></select>
+      </label>
+      <label>Month
+        <input type="month" name="month" required>
+      </label>
+      <label>Median sold price
+        <input type="text" inputmode="numeric" name="median" placeholder="e.g. 585000">
+      </label>
+      <label>Average sold price
+        <input type="text" inputmode="numeric" name="avgSold" placeholder="e.g. 610000">
+      </label>
+      <label>Average listing (asking) price
+        <input type="text" inputmode="numeric" name="avgListing" placeholder="e.g. 649000">
+      </label>
+      <div class="row2">
+        <label>Number sold
+          <input type="text" inputmode="numeric" name="sales" placeholder="optional">
+        </label>
+        <label>Active listings
+          <input type="text" inputmode="numeric" name="listings" placeholder="optional">
+        </label>
+      </div>
+      <label>Source / notes
+        <input type="text" name="notes" placeholder="e.g. Domain suburb profile">
+      </label>
+      <p class="hint">Leave any field blank if you don't have it. Prices can include $ and commas, or "585k".</p>
+      <p class="error" id="entryError" hidden></p>
+      <div class="actions">
+        <button type="button" class="ghost danger" id="deleteEntry" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" value="cancel" id="cancelEntry">Cancel</button>
+        <button type="submit" class="primary" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Data menu -->
+  <dialog id="menuDialog">
+    <div class="menu">
+      <h2>Your data</h2>
+      <p class="hint">Figures are stored on this phone only. Export a backup now and then so you never lose your history.</p>
+      <button class="primary block" id="exportJson">Export backup (JSON)</button>
+      <button class="ghost block" id="exportCsv">Export spreadsheet (CSV)</button>
+      <label class="ghost block file">Import backup or CSV
+        <input type="file" id="importFile" accept=".json,.csv,text/csv,application/json">
+      </label>
+      <button class="ghost block" id="pasteCsvBtn">Paste CSV rows</button>
+      <details>
+        <summary>CSV format</summary>
+        <pre class="code">suburb,month,median,avgSold,avgListing,sales,listings,notes
+Ballina,2026-09,895000,930000,989000,31,142,Domain</pre>
+        <p class="hint">Month is YYYY-MM. Rows for a suburb and month you already have will replace the old figures.</p>
+      </details>
+      <details>
+        <summary>Where to find the numbers</summary>
+        <ul class="sources">
+          <li><b>Median sold:</b> realestate.com.au or Domain suburb profiles, Cotality (CoreLogic) reports, NSW Valuer General sales data.</li>
+          <li><b>Average sold:</b> average the "Sold" results for the month on realestate.com.au / Domain, or use NSW Valuer General sales data.</li>
+          <li><b>Average listing:</b> average the asking prices of current "Buy" listings, or SQM Research asking-price data.</li>
+        </ul>
+      </details>
+      <hr>
+      <button class="ghost danger block" id="clearAll">Delete all data</button>
+      <div class="actions"><span class="spacer"></span><button class="ghost" id="closeMenu">Close</button></div>
+    </div>
+  </dialog>
+
+  <dialog id="pasteDialog">
+    <form method="dialog" id="pasteForm">
+      <h2>Paste CSV rows</h2>
+      <textarea name="csv" rows="8" placeholder="suburb,month,median,avgSold,avgListing,sales,listings,notes"></textarea>
+      <p class="error" id="pasteError" hidden></p>
+      <div class="actions"><span class="spacer"></span>
+        <button type="button" class="ghost" id="cancelPaste">Cancel</button>
+        <button type="submit" class="primary">Import</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
