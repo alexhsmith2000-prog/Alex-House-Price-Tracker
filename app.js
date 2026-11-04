@@ -1,44 +1,56 @@
-/* Northern Rivers Prices — monthly housing price tracker (offline PWA, no dependencies). */
+/* Northern Rivers Prices — sold-price tracker with filters (offline PWA, no dependencies).
+ * Sold prices: data/sales.json, built daily from NSW Valuer General sales data.
+ * Listing (asking) prices: entered by hand, stored on the phone. */
 (() => {
   'use strict';
 
-  const SUBURBS = [
-    { name: 'Casino', color: 'var(--s1)' },
-    { name: 'Lismore', color: 'var(--s2)' },
-    { name: 'Evans Head', color: 'var(--s3)' },
-    { name: 'Ballina', color: 'var(--s4)' },
+  // ---------- reference data ----------
+  const AREAS = [
+    { id: 'casino', name: 'Casino & district', pcs: ['2470'] },
+    { id: 'lismore', name: 'Lismore & district', pcs: ['2480'] },
+    { id: 'evans', name: 'Evans Head & Mid-Richmond', pcs: ['2471', '2472', '2473'] },
+    { id: 'ballina', name: 'Ballina, Lennox & Alstonville', pcs: ['2477', '2478'] },
+    { id: 'kyogle', name: 'Kyogle & Upper Richmond', pcs: ['2469', '2474', '2475', '2476'] },
+    { id: 'bangalow', name: 'Bangalow', pcs: ['2479'] },
+    { id: 'all', name: 'All Northern Rivers', pcs: null },
   ];
-  const METRICS = [
-    { key: 'median', label: 'Median sold', short: 'Median' },
-    { key: 'avgSold', label: 'Average sold', short: 'Avg sold' },
-    { key: 'avgListing', label: 'Average listing', short: 'Listing' },
+  const TYPES = [
+    { id: 'house', name: 'House in town' },
+    { id: 'unit', name: 'Unit / townhouse' },
+    { id: 'land', name: 'Vacant block (town)' },
+    { id: 'lifestyle', name: 'Rural lifestyle / acreage' },
+    { id: 'farm', name: 'Farm (40 ha+)' },
+    { id: 'other', name: 'Commercial / other' },
   ];
-  const RANGES = [
-    { key: 12, label: '1Y' },
-    { key: 24, label: '2Y' },
-    { key: 60, label: '5Y' },
-    { key: 0, label: 'All' },
+  const PRICE_STEPS = [100e3, 200e3, 300e3, 400e3, 500e3, 600e3, 700e3, 800e3, 900e3, 1e6, 1.25e6, 1.5e6, 2e6, 2.5e6, 3e6, 5e6];
+  const DEFAULT_VIEWS = [
+    { id: 'v-casino', name: 'Casino', area: 'casino', locs: ['CASINO'], types: ['house', 'unit'], min: 0, max: 0 },
+    { id: 'v-lismore', name: 'Lismore', area: 'lismore', locs: ['LISMORE', 'LISMORE HEIGHTS', 'EAST LISMORE', 'NORTH LISMORE', 'SOUTH LISMORE', 'GIRARDS HILL', 'GOONELLABAH'], types: ['house', 'unit'], min: 0, max: 0 },
+    { id: 'v-evans', name: 'Evans Head', area: 'evans', locs: ['EVANS HEAD'], types: ['house', 'unit'], min: 0, max: 0 },
+    { id: 'v-ballina', name: 'Ballina', area: 'ballina', locs: ['BALLINA', 'EAST BALLINA', 'WEST BALLINA'], types: ['house', 'unit'], min: 0, max: 0 },
   ];
-  const STORE_KEY = 'nr-prices.v1';
-  const PREF_KEY = 'nr-prices.prefs';
-  const COMPARE = 'Compare';
+  const PALETTE = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)', 'var(--s7)', 'var(--s8)'];
+  const RANGES = [{ key: 12, label: '1Y' }, { key: 24, label: '2Y' }, { key: 36, label: '3Y' }, { key: 0, label: 'All' }];
+  const METRICS = [{ key: 'median', label: 'Median' }, { key: 'avg', label: 'Average' }, { key: 'both', label: 'Both' }];
+  const MIN_SALES = 3; // months with fewer sales are left off the chart (too noisy)
+  const PROVISIONAL_MONTHS = 2; // latest months are incomplete: sales take weeks to be reported
+  const COMPARE = 'compare';
 
   // ---------- storage ----------
+  const K = { entries: 'nr-prices.v1', prefs: 'nr-prices.prefs', views: 'nr-prices.views' };
   const safeGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
   const safeSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch { return false; } };
+  const readJson = (k, fallback) => { try { const v = JSON.parse(safeGet(k)); return v ?? fallback; } catch { return fallback; } };
 
-  let entries = [];
-  try { entries = JSON.parse(safeGet(STORE_KEY) || '[]'); if (!Array.isArray(entries)) entries = []; } catch { entries = []; }
-  let prefs = { view: 'Casino', metric: 'all', range: 24 };
-  try { Object.assign(prefs, JSON.parse(safeGet(PREF_KEY) || '{}')); } catch { /* ignore */ }
+  let entries = readJson(K.entries, []); if (!Array.isArray(entries)) entries = [];
+  let views = readJson(K.views, null); if (!Array.isArray(views) || !views.length) views = structuredClone(DEFAULT_VIEWS);
+  const prefs = Object.assign({ view: views[0].id, metric: 'median', range: 24, smooth: 3 }, readJson(K.prefs, {}));
+  if (prefs.view !== COMPARE && !views.some((v) => v.id === prefs.view)) prefs.view = views[0].id;
+  if (!METRICS.some((m) => m.key === prefs.metric)) prefs.metric = 'median';
 
-  function save() {
-    entries.sort((a, b) => a.month.localeCompare(b.month) || a.suburb.localeCompare(b.suburb));
-    if (!safeSet(STORE_KEY, JSON.stringify(entries))) toast('Could not save on this device — export a backup!');
-  }
-  const savePrefs = () => safeSet(PREF_KEY, JSON.stringify(prefs));
-
-  // persistent storage request (helps stop the browser evicting data)
+  const saveEntries = () => { entries.sort((a, b) => a.month.localeCompare(b.month)); if (!safeSet(K.entries, JSON.stringify(entries))) toast('Could not save on this device — export a backup!'); };
+  const saveViews = () => safeSet(K.views, JSON.stringify(views));
+  const savePrefs = () => safeSet(K.prefs, JSON.stringify(prefs));
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
   // ---------- helpers ----------
@@ -48,219 +60,261 @@
     for (const [k, v] of Object.entries(attrs)) {
       if (k === 'class') n.className = v;
       else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+      else if (k === 'checked' || k === 'selected') n[k] = !!v;
       else if (v !== undefined && v !== null && v !== false) n.setAttribute(k, v === true ? '' : v);
     }
-    for (const kid of kids.flat()) if (kid != null) n.append(kid.nodeType ? kid : String(kid));
+    for (const kid of kids.flat()) if (kid != null && kid !== false) n.append(kid.nodeType ? kid : String(kid));
     return n;
   };
-  const svgEl = (tag, attrs = {}) => {
-    const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
-    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-    return n;
-  };
-
+  const svgEl = (tag, attrs = {}) => { const n = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
   const fmtMoney = (v) => v == null ? '—' : '$' + Math.round(v).toLocaleString('en-AU');
   const fmtShort = (v) => {
     if (v == null) return '—';
-    if (v >= 1e6) return '$' + (v / 1e6).toFixed(v >= 1e7 ? 1 : 2).replace(/\.?0+$/, '') + 'm';
+    if (v >= 1e6) return '$' + (v / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'm';
     if (v >= 1e3) return '$' + Math.round(v / 1e3) + 'k';
     return '$' + Math.round(v);
   };
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const fmtMonth = (m) => { const [y, mo] = m.split('-'); return `${MONTHS[+mo - 1]} ${y}`; };
   const fmtMonthShort = (m) => { const [y, mo] = m.split('-'); return `${MONTHS[+mo - 1]} ’${y.slice(2)}`; };
-  const addMonths = (m, n) => {
-    const [y, mo] = m.split('-').map(Number);
-    const d = new Date(Date.UTC(y, mo - 1 + n, 1));
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-  };
+  const fmtDate = (n) => { const s = String(n); return `${+s.slice(6, 8)} ${MONTHS[+s.slice(4, 6) - 1]} ${s.slice(0, 4)}`; };
+  const addMonths = (m, n) => { const [y, mo] = m.split('-').map(Number); const d = new Date(Date.UTC(y, mo - 1 + n, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; };
   const monthDiff = (a, b) => { const [ya, ma] = a.split('-').map(Number); const [yb, mb] = b.split('-').map(Number); return (yb - ya) * 12 + (mb - ma); };
   const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+  const titleCase = (s) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+  const fmtArea = (m2) => m2 == null ? '' : m2 >= 10000 ? `${(m2 / 10000).toFixed(m2 >= 1e6 ? 0 : 1)} ha` : `${Math.round(m2).toLocaleString('en-AU')} m²`;
+  const median = (arr) => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); const i = a.length >> 1; return a.length % 2 ? a[i] : (a[i - 1] + a[i]) / 2; };
+  const mean = (arr) => arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null;
+  const areaOf = (id) => AREAS.find((a) => a.id === id) || AREAS[AREAS.length - 1];
+  const typeName = (id) => TYPES.find((t) => t.id === id)?.name || id;
+  const viewColor = (v) => PALETTE[Math.max(0, views.indexOf(v)) % PALETTE.length];
+  const isProvisional = (m) => { const d = monthDiff(m, thisMonth()); return d >= 0 && d <= PROVISIONAL_MONTHS; };
 
   function parsePrice(raw) {
     if (raw == null) return null;
     let s = String(raw).trim().toLowerCase().replace(/[$,\s]/g, '');
     if (!s) return null;
     let mult = 1;
-    if (s.endsWith('k')) { mult = 1e3; s = s.slice(0, -1); }
-    else if (s.endsWith('m')) { mult = 1e6; s = s.slice(0, -1); }
+    if (s.endsWith('k')) { mult = 1e3; s = s.slice(0, -1); } else if (s.endsWith('m')) { mult = 1e6; s = s.slice(0, -1); }
     const n = Number(s);
-    if (!isFinite(n) || n < 0) return NaN;
-    return Math.round(n * mult);
+    return isFinite(n) && n >= 0 ? Math.round(n * mult) : NaN;
   }
   function parseMonth(raw) {
     const s = String(raw || '').trim();
-    let m = s.match(/^(\d{4})[-/](\d{1,2})(?:[-/]\d{1,2})?$/);
-    if (m) return `${m[1]}-${m[2].padStart(2, '0')}`;
-    m = s.match(/^(\d{1,2})[-/](\d{4})$/);
-    if (m) return `${m[2]}-${m[1].padStart(2, '0')}`;
+    let m = s.match(/^(\d{4})[-/](\d{1,2})(?:[-/]\d{1,2})?$/); if (m) return `${m[1]}-${m[2].padStart(2, '0')}`;
+    m = s.match(/^(\d{1,2})[-/](\d{4})$/); if (m) return `${m[2]}-${m[1].padStart(2, '0')}`;
     m = s.match(/^([a-z]{3})[a-z]*[\s-]+(\d{2,4})$/i);
-    if (m) {
-      const i = MONTHS.findIndex((x) => x.toLowerCase() === m[1].toLowerCase());
-      if (i >= 0) { const y = m[2].length === 2 ? '20' + m[2] : m[2]; return `${y}-${String(i + 1).padStart(2, '0')}`; }
-    }
+    if (m) { const i = MONTHS.findIndex((x) => x.toLowerCase() === m[1].toLowerCase()); if (i >= 0) return `${m[2].length === 2 ? '20' + m[2] : m[2]}-${String(i + 1).padStart(2, '0')}`; }
     return null;
   }
-  const matchSuburb = (raw) => {
-    const s = String(raw || '').trim().toLowerCase().replace(/\s+/g, ' ');
-    return SUBURBS.find((x) => x.name.toLowerCase() === s)?.name || null;
-  };
-  const colorOf = (name) => SUBURBS.find((s) => s.name === name)?.color || 'var(--accent)';
-
-  function upsert(rec) {
-    rec.id = `${rec.suburb}|${rec.month}`;
-    rec.updated = new Date().toISOString();
-    const i = entries.findIndex((e) => e.id === rec.id);
-    if (i >= 0) entries[i] = rec; else entries.push(rec);
-  }
-  const forSuburb = (name) => entries.filter((e) => e.suburb === name).sort((a, b) => a.month.localeCompare(b.month));
 
   let toastTimer;
-  function toast(msg) {
-    const t = $('#toast');
-    t.textContent = msg; t.hidden = false;
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+  function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2800); }
+
+  // ---------- sales data ----------
+  let SALES = [];
+  let DATA_INFO = null;
+  let LOC_COUNTS = new Map(); // locality → { pc, n }
+
+  // Sort a sale into one of TYPES using strata, land use, zoning and land size.
+  const TOWN_ZONE = /^(R[1-4]|RU5|MU|B[1-8]|E1|E2)$/;
+  const RURAL_ZONE = /^(RU[1-4]|RU6|R5|C[1-4])$/;
+  function classify(s) {
+    const z = s.zone, p = s.purpose, a = s.area;
+    if (s.strata) return 'unit';
+    if (/FARM|GRAZ|DAIRY|AGRIC|ORCHARD|PASTORAL|HORTIC|PLANTATION|POULTRY|CATTLE|BANANA|MACADAMIA/.test(p) && (a == null || a >= 100000)) return 'farm';
+    if (/^(IN\d|SP\d|E3|E4|W\d|RE\d)$/.test(z) || /COMMERC|SHOP|OFFICE|INDUSTR|FACTORY|WAREHOUSE|HOTEL|MOTEL|SERVICE STATION|CHURCH|CARAVAN/.test(p)) return 'other';
+    const rural = RURAL_ZONE.test(z) || (!TOWN_ZONE.test(z) && a != null && a >= 4000);
+    if (rural) return a != null && a >= 400000 ? 'farm' : 'lifestyle';
+    if (s.nature === 'V') return 'land';
+    return 'house';
+  }
+
+  function decode(json) {
+    const L = json.localities, Z = json.zones, P = json.purposes, St = json.streets;
+    LOC_COUNTS = new Map();
+    let latest = 0;
+    SALES = json.sales.map((r) => {
+      const [d, li, price, area, zi, nature, pi, strata, si] = r;
+      const [loc, pc] = L[li];
+      const ds = String(d);
+      const s = { d, m: `${ds.slice(0, 4)}-${ds.slice(4, 6)}`, loc, pc, price, area, zone: Z[zi] || '', nature: nature || '', purpose: P[pi] || '', strata: !!strata, street: St[si] || '' };
+      s.type = classify(s);
+      if (d > latest) latest = d;
+      const c = LOC_COUNTS.get(loc) || { pc, n: 0 }; c.n++; LOC_COUNTS.set(loc, c);
+      return s;
+    });
+    DATA_INFO = { generated: json.generated, latest };
+  }
+
+  async function loadSales() {
+    try {
+      const res = await fetch('data/sales.json', { cache: 'no-cache' });
+      if (!res.ok) throw new Error(res.status);
+      decode(await res.json());
+    } catch { SALES = []; DATA_INFO = null; }
+    render();
+  }
+
+  const matcher = (v) => {
+    const area = areaOf(v.area);
+    const locs = v.locs && v.locs.length ? new Set(v.locs) : null;
+    const types = v.types && v.types.length ? new Set(v.types) : null;
+    return (s) => (!area.pcs || area.pcs.includes(s.pc)) && (!locs || locs.has(s.loc)) && (!types || types.has(s.type)) &&
+      (!v.min || s.price >= v.min) && (!v.max || s.price <= v.max);
+  };
+  const salesFor = (v) => SALES.filter(matcher(v));
+
+  // monthly stats, optionally pooled over a rolling window of months
+  function monthly(list, smooth) {
+    const by = new Map();
+    for (const s of list) { if (!by.has(s.m)) by.set(s.m, []); by.get(s.m).push(s.price); }
+    if (!by.size) return [];
+    const ms = [...by.keys()].sort();
+    const rows = [];
+    for (let m = ms[0]; m <= ms[ms.length - 1]; m = addMonths(m, 1)) {
+      const own = by.get(m) || [];
+      let pool = own;
+      if (smooth > 1) { pool = []; for (let i = 0; i < smooth; i++) pool = pool.concat(by.get(addMonths(m, -i)) || []); }
+      rows.push({ month: m, n: own.length, pooled: pool.length, median: median(pool), avg: mean(pool) });
+    }
+    return rows;
   }
 
   // ---------- rendering ----------
+  const currentView = () => views.find((v) => v.id === prefs.view);
+
   function render() {
-    renderHeader();
-    renderChips();
-    renderSegs();
-    renderCards();
-    renderChart();
-    renderGaps();
-    renderTable();
+    renderHeader(); renderChips(); renderFilterBar(); renderSegs();
+    renderCards(); renderChart(); renderTable(); renderSalesList();
   }
 
   function renderHeader() {
-    if (!entries.length) { $('#lastUpdated').textContent = 'No data yet — tap “+ Add month”'; return; }
-    const latestMonth = entries.reduce((m, e) => (e.month > m ? e.month : m), '');
-    const lastEdit = entries.reduce((m, e) => (e.updated > m ? e.updated : m), '');
-    const d = lastEdit ? new Date(lastEdit).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-    $('#lastUpdated').textContent = `Latest data: ${fmtMonth(latestMonth)}${d ? ` · updated ${d}` : ''}`;
+    const h = $('#lastUpdated');
+    if (!DATA_INFO) { h.textContent = 'Sold-price data not downloaded yet'; return; }
+    const g = new Date(DATA_INFO.generated);
+    h.textContent = `${SALES.length.toLocaleString('en-AU')} sales · latest ${fmtDate(DATA_INFO.latest)} · updated ${g.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`;
   }
 
   function renderChips() {
-    const nav = $('#suburbChips'); nav.replaceChildren();
-    for (const s of SUBURBS) {
-      nav.append(el('button', {
-        class: 'chip', role: 'tab', 'aria-selected': String(prefs.view === s.name),
-        onclick: () => { prefs.view = s.name; savePrefs(); render(); },
-      }, el('span', { class: 'dot', style: `background:${s.color}` }), s.name));
+    const nav = $('#viewChips'); nav.replaceChildren();
+    for (const v of views) {
+      nav.append(el('button', { class: 'chip', role: 'tab', 'aria-selected': String(prefs.view === v.id), onclick: () => { prefs.view = v.id; salesShown = 30; savePrefs(); render(); } },
+        el('span', { class: 'dot', style: `background:${viewColor(v)}` }), v.name));
     }
-    nav.append(el('button', {
-      class: 'chip', role: 'tab', 'aria-selected': String(prefs.view === COMPARE),
-      onclick: () => { prefs.view = COMPARE; savePrefs(); render(); },
-    }, 'Compare all'));
+    nav.append(el('button', { class: 'chip', role: 'tab', 'aria-selected': String(prefs.view === COMPARE), onclick: () => { prefs.view = COMPARE; savePrefs(); render(); } }, 'Compare'));
+    nav.append(el('button', { class: 'chip add', onclick: () => openFilters(true) }, '+ New search'));
+    nav.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  function filterSummary(v) {
+    const area = areaOf(v.area);
+    const where = v.locs && v.locs.length ? (v.locs.length <= 2 ? v.locs.map(titleCase).join(', ') : `${v.locs.length} locations · ${area.name}`) : area.name;
+    const types = !v.types || !v.types.length || v.types.length === TYPES.length ? 'All property types' : v.types.map(typeName).join(', ');
+    const price = v.min && v.max ? `${fmtShort(v.min)}–${fmtShort(v.max)}` : v.min ? `${fmtShort(v.min)}+` : v.max ? `Up to ${fmtShort(v.max)}` : 'Any price';
+    return { where, types, price };
+  }
+
+  function renderFilterBar() {
+    const bar = $('#filterBar'); bar.replaceChildren();
+    const v = currentView();
+    if (!v) { bar.append(el('div', { class: 'fsum' }, el('b', {}, 'Comparing your saved searches'), el('span', {}, 'Tap a search above to change its filters'))); return; }
+    const f = filterSummary(v);
+    bar.append(el('div', { class: 'fsum' }, el('b', {}, f.where), el('span', {}, `${f.types} · ${f.price}`)),
+      el('button', { class: 'ghost small', onclick: () => openFilters(false) }, 'Filters'));
   }
 
   function renderSegs() {
     const compare = prefs.view === COMPARE;
-    if (compare && prefs.metric === 'all') prefs.metric = 'median';
-    const opts = [...(compare ? [] : [{ key: 'all', short: 'All' }]), ...METRICS];
+    if (compare && prefs.metric === 'both') prefs.metric = 'median';
     const seg = $('#metricSeg'); seg.replaceChildren();
-    for (const o of opts) {
-      seg.append(el('button', {
-        role: 'tab', 'aria-selected': String(prefs.metric === o.key),
-        onclick: () => { prefs.metric = o.key; savePrefs(); render(); },
-      }, o.short));
+    for (const o of METRICS) {
+      if (compare && o.key === 'both') continue;
+      seg.append(el('button', { role: 'tab', 'aria-selected': String(prefs.metric === o.key), onclick: () => { prefs.metric = o.key; savePrefs(); render(); } }, o.label));
     }
     const rs = $('#rangeSeg'); rs.replaceChildren();
-    for (const r of RANGES) {
-      rs.append(el('button', {
-        role: 'tab', 'aria-selected': String(prefs.range === r.key),
-        onclick: () => { prefs.range = r.key; savePrefs(); renderChart(); renderSegs(); renderTable(); },
-      }, r.label));
-    }
+    for (const r of RANGES) rs.append(el('button', { role: 'tab', 'aria-selected': String(prefs.range === r.key), onclick: () => { prefs.range = r.key; savePrefs(); render(); } }, r.label));
+    const sm = $('#smoothSeg'); sm.replaceChildren();
+    for (const [k, label] of [[1, 'Monthly'], [3, '3-month rolling']]) sm.append(el('button', { role: 'tab', 'aria-selected': String(prefs.smooth === k), onclick: () => { prefs.smooth = k; savePrefs(); render(); } }, label));
   }
 
-  // latest value of a metric + comparison against ~12 months earlier (or previous available)
-  function trend(rows, key) {
-    const withVal = rows.filter((r) => r[key] != null);
-    if (!withVal.length) return null;
-    const last = withVal[withVal.length - 1];
-    const target = addMonths(last.month, -12);
-    let base = withVal.find((r) => r.month === target);
-    let label = 'vs 12 mths ago';
-    if (!base && withVal.length > 1) {
-      base = withVal[withVal.length - 2];
-      label = `vs ${fmtMonthShort(base.month)}`;
-    }
-    const pct = base && base[key] ? ((last[key] - base[key]) / base[key]) * 100 : null;
-    return { value: last[key], month: last.month, pct, label };
+  // last 3 months vs the same 3 months a year earlier
+  function windowStats(list, endMonth, months = 3) {
+    const startM = addMonths(endMonth, -(months - 1));
+    const prevEnd = addMonths(endMonth, -12), prevStart = addMonths(startM, -12);
+    return {
+      startM,
+      cur: list.filter((s) => s.m >= startM && s.m <= endMonth).map((s) => s.price),
+      prev: list.filter((s) => s.m >= prevStart && s.m <= prevEnd).map((s) => s.price),
+    };
   }
-
-  function card(label, t, sub) {
-    const delta = t && t.pct != null
-      ? el('div', { class: 'delta' },
-          el('span', { class: t.pct >= 0 ? 'up' : 'down' }, `${t.pct >= 0 ? '▲' : '▼'} ${Math.abs(t.pct).toFixed(1)}%`),
-          ` ${t.label}`)
-      : el('div', { class: 'delta' }, t ? fmtMonth(t.month) : 'No data');
+  function statCard(label, value, cmp, sub) {
+    const pct = value != null && cmp ? ((value - cmp) / cmp) * 100 : null;
     return el('div', { class: 'card' },
-      el('div', { class: 'label' }, label, sub ? ` · ${sub}` : ''),
-      el('div', { class: 'value' }, t ? fmtShort(t.value) : '—'),
-      delta);
+      el('div', { class: 'label' }, label),
+      el('div', { class: 'value' }, value == null ? '—' : fmtShort(value)),
+      el('div', { class: 'delta' }, pct != null ? [el('span', { class: pct >= 0 ? 'up' : 'down' }, `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%`), ' vs year before'] : sub || ''));
   }
 
   function renderCards() {
     const box = $('#statCards'); box.replaceChildren();
+    if (!SALES.length) {
+      box.className = 'cards compare';
+      box.append(el('div', { class: 'card wide' }, el('div', { class: 'label' }, 'Sold prices'),
+        el('div', { class: 'delta' }, 'Sold prices download automatically once the daily update has run. Listing prices you add yourself show on the chart in the meantime.')));
+      return;
+    }
+    const end = addMonths(thisMonth(), -1);
     if (prefs.view === COMPARE) {
-      const key = prefs.metric;
-      const m = METRICS.find((x) => x.key === key);
-      box.classList.add('compare');
-      for (const s of SUBURBS) {
-        const t = trend(forSuburb(s.name), key);
-        const c = card(s.name, t, m.short);
-        c.querySelector('.label').prepend(el('span', { class: 'dot', style: `display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${s.color}` }));
+      box.className = 'cards compare';
+      const fn = prefs.metric === 'avg' ? mean : median;
+      for (const v of views) {
+        const w = windowStats(salesFor(v), end);
+        const c = statCard(v.name, fn(w.cur), fn(w.prev), `${w.cur.length} sales`);
+        c.querySelector('.label').prepend(el('span', { class: 'dot', style: `background:${viewColor(v)}` }));
         box.append(c);
       }
-    } else {
-      box.classList.remove('compare');
-      const rows = forSuburb(prefs.view);
-      for (const m of METRICS) box.append(card(m.label, trend(rows, m.key)));
+      return;
     }
+    box.className = 'cards';
+    const w = windowStats(salesFor(currentView()), end);
+    box.append(
+      statCard(`Median sold · ${fmtMonthShort(w.startM)}–${fmtMonthShort(end)}`, median(w.cur), median(w.prev), `${w.cur.length} sales`),
+      statCard('Average sold', mean(w.cur), mean(w.prev)),
+      el('div', { class: 'card' }, el('div', { class: 'label' }, 'Sales, last 3 mths'), el('div', { class: 'value' }, String(w.cur.length)),
+        el('div', { class: 'delta' }, `${w.prev.length} a year before`)));
+  }
+
+  function niceTicks(min, max, count = 4) {
+    if (min === max) { min *= 0.9; max *= 1.1; }
+    const step0 = (max - min) / count, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+    const step = [1, 2, 2.5, 5, 10].map((x) => x * mag).find((x) => x >= step0);
+    const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
+    const ticks = []; for (let v = lo; v <= hi + step / 2; v += step) ticks.push(v);
+    return { lo, hi, ticks };
   }
 
   function buildSeries() {
-    const compare = prefs.view === COMPARE;
-    let series = [];
-    if (compare) {
-      series = SUBURBS.map((s) => ({
-        name: s.name, color: s.color, dashed: false,
-        points: forSuburb(s.name).filter((r) => r[prefs.metric] != null).map((r) => ({ month: r.month, v: r[prefs.metric] })),
-      }));
+    const series = [];
+    const add = (name, color, dashed, points) => series.push({ name, color, dashed, points });
+    const pts = (rows, k) => rows.filter((r) => r.pooled >= MIN_SALES).map((r) => ({ month: r.month, v: r[k], n: r.pooled }));
+    if (prefs.view === COMPARE) {
+      for (const v of views) add(v.name, viewColor(v), false, pts(monthly(salesFor(v), prefs.smooth), prefs.metric));
     } else {
-      const rows = forSuburb(prefs.view);
-      const base = colorOf(prefs.view);
-      const metrics = prefs.metric === 'all' ? METRICS : METRICS.filter((m) => m.key === prefs.metric);
-      const styles = { median: { color: base, dashed: false }, avgSold: { color: 'var(--muted)', dashed: false }, avgListing: { color: base, dashed: true } };
-      series = metrics.map((m) => ({
-        name: m.label, ...(metrics.length === 1 ? { color: base, dashed: false } : styles[m.key]),
-        points: rows.filter((r) => r[m.key] != null).map((r) => ({ month: r.month, v: r[m.key] })),
-      }));
+      const v = currentView(), color = viewColor(v);
+      const rows = monthly(salesFor(v), prefs.smooth);
+      if (prefs.metric !== 'avg') add('Median sold', color, false, pts(rows, 'median'));
+      if (prefs.metric !== 'median') add('Average sold', 'var(--muted)', false, pts(rows, 'avg'));
+      const lst = entries.filter((e) => e.suburb === v.name && e.avgListing != null).sort((a, b) => a.month.localeCompare(b.month));
+      if (lst.length) add('Avg listing (yours)', color, true, lst.map((e) => ({ month: e.month, v: e.avgListing })));
     }
-    // apply range
     const all = series.flatMap((s) => s.points.map((p) => p.month));
     if (!all.length) return { series, start: null, end: null };
     const end = all.reduce((a, b) => (a > b ? a : b));
     let start = all.reduce((a, b) => (a < b ? a : b));
     if (prefs.range) { const rs = addMonths(end, -(prefs.range - 1)); if (rs > start) start = rs; }
-    for (const s of series) s.points = s.points.filter((p) => p.month >= start && p.month <= end);
+    for (const s of series) s.points = s.points.filter((p) => p.month >= start);
     return { series, start, end };
-  }
-
-  function niceTicks(min, max, count = 4) {
-    if (min === max) { min *= 0.95; max *= 1.05; }
-    const span = max - min;
-    const step0 = span / count;
-    const mag = Math.pow(10, Math.floor(Math.log10(step0)));
-    const step = [1, 2, 2.5, 5, 10].map((x) => x * mag).find((x) => x >= step0);
-    const lo = Math.floor(min / step) * step;
-    const hi = Math.ceil(max / step) * step;
-    const ticks = [];
-    for (let v = lo; v <= hi + step / 2; v += step) ticks.push(v);
-    return { lo, hi, ticks };
   }
 
   function renderChart() {
@@ -269,203 +323,286 @@
     const { series, start, end } = buildSeries();
     const nonEmpty = series.filter((s) => s.points.length);
     if (!nonEmpty.length) {
-      box.append(el('div', { class: 'empty' }, prefs.view === COMPARE
-        ? 'Add figures for a few suburbs to compare them here.'
-        : `No ${prefs.view} figures yet. Tap “+ Add month” to start your history.`));
+      box.append(el('div', { class: 'empty' }, SALES.length ? 'Not enough sales match these filters to chart. Try a wider area, more property types or a bigger price range.' : 'No data to chart yet.'));
       return;
     }
-
     const W = box.clientWidth || 340, H = box.clientHeight || 240;
     const pad = { l: 46, r: 10, t: 12, b: 26 };
     const n = Math.max(1, monthDiff(start, end));
     const vals = nonEmpty.flatMap((s) => s.points.map((p) => p.v));
     const { lo, hi, ticks } = niceTicks(Math.min(...vals), Math.max(...vals));
-    const x = (m) => pad.l + (monthDiff(start, m) / n) * (W - pad.l - pad.r);
+    const step = (W - pad.l - pad.r) / n;
+    const x = (m) => pad.l + monthDiff(start, m) * step;
     const y = (v) => pad.t + (1 - (v - lo) / (hi - lo || 1)) * (H - pad.t - pad.b);
-
     const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Price trend chart' });
+
+    const provStart = addMonths(thisMonth(), -PROVISIONAL_MONTHS);
+    const showProv = SALES.length && end >= provStart;
+    if (showProv) {
+      const bx = Math.max(pad.l, x(provStart > start ? provStart : start) - step / 2);
+      svg.append(svgEl('rect', { x: bx, y: pad.t, width: Math.max(0, W - pad.r - bx), height: H - pad.t - pad.b, fill: 'var(--grid)', opacity: 0.7 }));
+    }
     for (const t of ticks) {
       svg.append(svgEl('line', { x1: pad.l, x2: W - pad.r, y1: y(t), y2: y(t), stroke: 'var(--grid)', 'stroke-width': 1 }));
       const lab = svgEl('text', { x: pad.l - 6, y: y(t) + 4, 'text-anchor': 'end' }); lab.textContent = fmtShort(t); svg.append(lab);
     }
-    // x labels: ~4-6 evenly spaced months
-    const totalMonths = n + 1;
-    const every = Math.max(1, Math.ceil(totalMonths / Math.max(2, Math.floor((W - pad.l) / 70))));
+    const every = Math.max(1, Math.ceil((n + 1) / Math.max(2, Math.floor((W - pad.l) / 70))));
     for (let i = 0; i <= n; i += every) {
       const m = addMonths(start, i);
-      const lab = svgEl('text', { x: x(m), y: H - 6, 'text-anchor': i === 0 && n > 0 ? 'start' : 'middle' });
-      lab.textContent = fmtMonthShort(m); svg.append(lab);
+      const lab = svgEl('text', { x: x(m), y: H - 6, 'text-anchor': i === 0 && n > 0 ? 'start' : 'middle' }); lab.textContent = fmtMonthShort(m); svg.append(lab);
     }
-
     for (const s of nonEmpty) {
-      // break the line where months are missing
       let d = '', prev = null;
-      for (const p of s.points) {
-        d += (prev && monthDiff(prev.month, p.month) === 1 ? 'L' : 'M') + x(p.month).toFixed(1) + ',' + y(p.v).toFixed(1);
-        prev = p;
-      }
-      svg.append(svgEl('path', {
-        d, fill: 'none', stroke: s.color, 'stroke-width': 2.25, 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
-        ...(s.dashed ? { 'stroke-dasharray': '6 4' } : {}),
-      }));
-      // dots: show when few points, or for isolated points
+      for (const p of s.points) { d += (prev && monthDiff(prev.month, p.month) === 1 ? 'L' : 'M') + x(p.month).toFixed(1) + ',' + y(p.v).toFixed(1); prev = p; }
+      svg.append(svgEl('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2.25, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', ...(s.dashed ? { 'stroke-dasharray': '6 4' } : {}) }));
       s.points.forEach((p, i) => {
-        const isolated = !(s.points[i - 1] && monthDiff(s.points[i - 1].month, p.month) === 1) && !(s.points[i + 1] && monthDiff(p.month, s.points[i + 1].month) === 1);
-        if (s.points.length <= 14 || isolated) svg.append(svgEl('circle', { cx: x(p.month), cy: y(p.v), r: 3, fill: s.color }));
+        const iso = !(s.points[i - 1] && monthDiff(s.points[i - 1].month, p.month) === 1) && !(s.points[i + 1] && monthDiff(p.month, s.points[i + 1].month) === 1);
+        if (s.points.length <= 14 || iso) svg.append(svgEl('circle', { cx: x(p.month), cy: y(p.v), r: 3, fill: s.color }));
       });
     }
-
-    // hover / touch crosshair
     const cross = svgEl('line', { y1: pad.t, y2: H - pad.b, stroke: 'var(--muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' });
     svg.append(cross);
     const tip = el('div', { class: 'tip', hidden: true });
     const onMove = (ev) => {
       const r = svg.getBoundingClientRect();
       const px = ((ev.clientX - r.left) / r.width) * W;
-      const i = Math.round(((px - pad.l) / (W - pad.l - pad.r)) * n);
-      const m = addMonths(start, Math.max(0, Math.min(n, i)));
+      const m = addMonths(start, Math.max(0, Math.min(n, Math.round((px - pad.l) / step))));
       const lines = nonEmpty.map((s) => ({ s, p: s.points.find((p) => p.month === m) })).filter((o) => o.p);
       cross.setAttribute('x1', x(m)); cross.setAttribute('x2', x(m)); cross.setAttribute('visibility', 'visible');
-      tip.replaceChildren(el('div', {}, el('b', {}, fmtMonth(m))),
-        ...(lines.length ? lines.map((o) => el('div', {}, `${o.s.name}: ${fmtMoney(o.p.v)}`)) : [el('div', {}, 'No data')]));
+      tip.replaceChildren(el('div', {}, el('b', {}, fmtMonth(m)), isProvisional(m) ? ' · incomplete' : ''),
+        ...(lines.length ? lines.map((o) => el('div', {}, `${o.s.name}: ${fmtMoney(o.p.v)}${o.p.n ? ` (${o.p.n} sales)` : ''}`)) : [el('div', {}, 'Not enough sales')]));
       tip.hidden = false;
-      const left = (x(m) / W) * r.width;
-      tip.style.left = Math.max(70, Math.min(r.width - 70, left)) + 'px';
+      tip.style.left = Math.max(90, Math.min(r.width - 90, (x(m) / W) * r.width)) + 'px';
     };
-    const onLeave = () => { cross.setAttribute('visibility', 'hidden'); tip.hidden = true; };
     svg.addEventListener('pointermove', onMove);
     svg.addEventListener('pointerdown', onMove);
-    svg.addEventListener('pointerleave', onLeave);
-
+    svg.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); tip.hidden = true; });
     box.append(svg, tip);
-
-    for (const s of series) {
-      legend.append(el('span', {},
-        el('i', { class: s.dashed ? 'dash' : '', style: s.dashed ? `color:${s.color}` : `background:${s.color}` }),
-        s.name + (s.points.length ? '' : ' (no data)')));
-    }
-  }
-
-  function renderGaps() {
-    const panel = $('#gapPanel');
-    if (prefs.view === COMPARE) { panel.hidden = true; return; }
-    const rows = forSuburb(prefs.view);
-    if (!rows.length) { panel.hidden = true; return; }
-    const have = new Set(rows.map((r) => r.month));
-    const last = addMonths(thisMonth(), -1);
-    const missing = [];
-    for (let i = 23; i >= 0; i--) { const m = addMonths(last, -i); if (!have.has(m)) missing.push(m); }
-    if (!missing.length) { panel.hidden = true; return; }
-    panel.hidden = false;
-    panel.replaceChildren(
-      el('h2', {}, `Missing months (${missing.length})`),
-      el('p', { class: 'gaps' }, `${prefs.view} is missing figures for: `,
-        ...missing.map((m, i) => [el('a', { href: '#', onclick: (e) => { e.preventDefault(); openEntry({ suburb: prefs.view, month: m }); } }, fmtMonthShort(m)), i < missing.length - 1 ? ', ' : ''])),
-    );
+    for (const s of series) legend.append(el('span', {}, el('i', { class: s.dashed ? 'dash' : '', style: s.dashed ? `color:${s.color}` : `background:${s.color}` }), s.name + (s.points.length ? '' : ' (not enough sales)')));
+    if (showProv) legend.append(el('span', {}, el('i', { class: 'band' }), 'Recent months, sales still being reported'));
   }
 
   function renderTable() {
     const t = $('#table'); t.replaceChildren();
-    const cell = (v, short) => el('td', { class: v == null ? 'na' : '' }, short ? fmtShort(v) : fmtMoney(v));
+    const td = (v) => el('td', { class: v == null ? 'na' : '' }, fmtShort(v));
+    const rolling = prefs.smooth > 1 ? ' (3-month rolling)' : '';
     if (prefs.view === COMPARE) {
-      const m = METRICS.find((x) => x.key === prefs.metric);
-      $('#tableTitle').textContent = `${m.label} by suburb`;
-      const months = [...new Set(entries.map((e) => e.month))].sort().reverse();
-      t.append(el('thead', {}, el('tr', {}, el('th', {}, 'Month'), ...SUBURBS.map((s) => el('th', {}, s.name)))));
+      const key = prefs.metric === 'avg' ? 'avg' : 'median';
+      $('#tableTitle').textContent = `${key === 'avg' ? 'Average' : 'Median'} sold${rolling}`;
+      const data = views.map((v) => new Map(monthly(salesFor(v), prefs.smooth).map((r) => [r.month, r])));
+      const months = [...new Set(data.flatMap((m) => [...m.keys()]))].sort().reverse();
+      t.append(el('thead', {}, el('tr', {}, el('th', {}, 'Month'), ...views.map((v) => el('th', {}, v.name)))));
       const tb = el('tbody');
-      for (const mo of months) {
-        tb.append(el('tr', {}, el('td', {}, fmtMonthShort(mo)),
-          ...SUBURBS.map((s) => cell(entries.find((e) => e.suburb === s.name && e.month === mo)?.[m.key] ?? null, true))));
-      }
-      if (!months.length) tb.append(el('tr', {}, el('td', { colspan: 5, class: 'table-empty' }, 'No figures yet.')));
+      for (const mo of months) tb.append(el('tr', {}, el('td', {}, fmtMonthShort(mo)), ...data.map((m) => { const r = m.get(mo); return td(r && r.pooled >= MIN_SALES ? r[key] : null); })));
+      if (!months.length) tb.append(el('tr', {}, el('td', { colspan: views.length + 1, class: 'table-empty' }, 'No sales yet.')));
       t.append(tb);
+      $('#tableNote').textContent = '';
       return;
     }
-    $('#tableTitle').textContent = `${prefs.view} monthly figures`;
-    const rows = forSuburb(prefs.view).reverse();
-    t.append(el('thead', {}, el('tr', {}, el('th', {}, 'Month'), el('th', {}, 'Median'), el('th', {}, 'Avg sold'), el('th', {}, 'Avg listing'), el('th', {}, 'Sold'))));
+    const v = currentView();
+    $('#tableTitle').textContent = `${v.name} by month${rolling}`;
+    const rows = new Map(monthly(salesFor(v), prefs.smooth).map((r) => [r.month, r]));
+    const lst = new Map(entries.filter((e) => e.suburb === v.name).map((e) => [e.month, e]));
+    const months = [...new Set([...rows.keys(), ...lst.keys()])].sort().reverse();
+    t.append(el('thead', {}, el('tr', {}, el('th', {}, 'Month'), el('th', {}, 'Sales'), el('th', {}, 'Median'), el('th', {}, 'Average'), el('th', {}, 'Listing'))));
     const tb = el('tbody');
-    for (const r of rows) {
-      tb.append(el('tr', { onclick: () => openEntry(r), title: r.notes || '' },
-        el('td', {}, fmtMonthShort(r.month)), cell(r.median), cell(r.avgSold), cell(r.avgListing),
-        el('td', { class: r.sales == null ? 'na' : '' }, r.sales ?? '—')));
+    for (const m of months) {
+      const r = rows.get(m), e = lst.get(m);
+      tb.append(el('tr', { onclick: () => openEntry({ suburb: v.name, month: m }) },
+        el('td', {}, fmtMonthShort(m), isProvisional(m) ? '*' : ''), el('td', {}, r ? r.n : 0),
+        td(r ? r.median : null), td(r ? r.avg : null), td(e ? e.avgListing : null)));
     }
-    if (!rows.length) tb.append(el('tr', {}, el('td', { colspan: 5, class: 'table-empty' }, 'Tap “+ Add month” to enter your first figures. Tap any row later to edit it.')));
+    if (!months.length) tb.append(el('tr', {}, el('td', { colspan: 5, class: 'table-empty' }, 'No sales match these filters.')));
     t.append(tb);
+    $('#tableNote').textContent = months.length ? '* Sales for this month are still being reported. Tap a month to add your listing (asking) price.' : '';
   }
 
-  // ---------- entry dialog ----------
+  let salesShown = 30;
+  function renderSalesList() {
+    const box = $('#salesList'); box.replaceChildren();
+    const panel = $('#salesPanel');
+    const v = currentView();
+    if (!v || !SALES.length) { panel.hidden = true; return; }
+    panel.hidden = false;
+    const list = salesFor(v).sort((a, b) => b.d - a.d);
+    $('#salesTitle').textContent = `Sales matching this search (${list.length.toLocaleString('en-AU')})`;
+    for (const s of list.slice(0, salesShown)) {
+      box.append(el('li', {},
+        el('div', { class: 'srow' }, el('b', {}, fmtMoney(s.price)), el('span', { class: 'sdate' }, fmtDate(s.d))),
+        el('div', { class: 'sline' }, `${s.street ? titleCase(s.street) + ', ' : ''}${titleCase(s.loc)}`),
+        el('div', { class: 'smeta' }, [typeName(s.type), fmtArea(s.area), s.zone ? `zone ${s.zone}` : ''].filter(Boolean).join(' · '))));
+    }
+    if (!list.length) box.append(el('li', { class: 'table-empty' }, 'No sales match these filters.'));
+    const more = $('#moreSales');
+    more.hidden = list.length <= salesShown;
+    more.onclick = () => { salesShown += 50; renderSalesList(); };
+  }
+
+  // ---------- filters dialog ----------
+  const fDlg = $('#filterDialog');
+  let editing = null, isNew = false;
+
+  function openFilters(asNew) {
+    isNew = asNew;
+    editing = asNew ? { id: '', name: '', area: 'all', locs: [], types: ['house'], min: 0, max: 0 } : structuredClone(currentView());
+    $('#filterTitle').textContent = asNew ? 'New search' : `Edit “${editing.name}”`;
+    $('#fName').value = editing.name;
+    const areaSel = $('#fArea'); areaSel.replaceChildren(...AREAS.map((a) => el('option', { value: a.id }, a.name))); areaSel.value = editing.area;
+    for (const [id, anyLabel, val] of [['#fMin', 'No min', editing.min], ['#fMax', 'No max', editing.max]]) {
+      const sel = $(id);
+      const steps = val && !PRICE_STEPS.includes(val) ? [...PRICE_STEPS, val].sort((a, b) => a - b) : PRICE_STEPS;
+      sel.replaceChildren(el('option', { value: 0 }, anyLabel), ...steps.map((p) => el('option', { value: p }, fmtShort(p))));
+      sel.value = String(val || 0);
+    }
+    renderTypeChecks(); renderLocChecks();
+    $('#deleteView').hidden = asNew || views.length <= 1;
+    $('#saveAsNew').hidden = asNew;
+    $('#filterError').hidden = true;
+    fDlg.showModal();
+    fDlg.querySelector('.sheet-body').scrollTop = 0;
+  }
+
+  function renderTypeChecks() {
+    const box = $('#fTypes'); box.replaceChildren();
+    for (const t of TYPES) {
+      box.append(el('label', { class: 'check' }, el('input', { type: 'checkbox', value: t.id, checked: editing.types.includes(t.id), onchange: (e) => {
+        editing.types = TYPES.map((x) => x.id).filter((id) => (id === t.id ? e.target.checked : editing.types.includes(id)));
+        updateCount();
+      } }), t.name));
+    }
+  }
+
+  function renderLocChecks() {
+    const area = areaOf(editing.area);
+    const locs = [...LOC_COUNTS.entries()].filter(([, c]) => !area.pcs || area.pcs.includes(c.pc)).sort((a, b) => b[1].n - a[1].n);
+    for (const l of editing.locs) if (!LOC_COUNTS.has(l)) locs.push([l, { n: 0 }]); // chosen but no sales yet
+    const box = $('#fLocs'); box.replaceChildren();
+    $('#fLocSearch').value = '';
+    if (!locs.length) box.append(el('p', { class: 'hint' }, 'Locations appear here once sales data has downloaded.'));
+    for (const [name, c] of locs) {
+      box.append(el('label', { class: 'check', 'data-name': name.toLowerCase() },
+        el('input', { type: 'checkbox', value: name, checked: editing.locs.includes(name), onchange: (e) => {
+          editing.locs = e.target.checked ? [...editing.locs, name] : editing.locs.filter((x) => x !== name);
+          updateCount();
+        } }), el('span', { class: 'grow' }, titleCase(name)), el('span', { class: 'count' }, c.n)));
+    }
+    updateCount();
+  }
+
+  function updateCount() {
+    $('#fCount').textContent = SALES.length ? `${salesFor(editing).length.toLocaleString('en-AU')} matching sales` : '';
+    $('#fLocLabel').textContent = editing.locs.length ? `Locations · ${editing.locs.length} selected` : 'Locations · all in area';
+  }
+
+  $('#fArea').addEventListener('change', (e) => {
+    editing.area = e.target.value;
+    const area = areaOf(editing.area);
+    editing.locs = editing.locs.filter((l) => { const c = LOC_COUNTS.get(l); return !c || !area.pcs || area.pcs.includes(c.pc); });
+    renderLocChecks();
+  });
+  $('#fLocSearch').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    for (const lab of $('#fLocs').querySelectorAll('label.check')) lab.hidden = !!q && !lab.dataset.name.includes(q);
+  });
+  $('#fLocAll').addEventListener('click', () => { editing.locs = []; renderLocChecks(); });
+  $('#fMin').addEventListener('change', (e) => { editing.min = +e.target.value; updateCount(); });
+  $('#fMax').addEventListener('change', (e) => { editing.max = +e.target.value; updateCount(); });
+  $('#cancelFilters').addEventListener('click', () => fDlg.close());
+
+  function commitFilters(asNew) {
+    const name = $('#fName').value.trim();
+    const err = (m) => { const e = $('#filterError'); e.textContent = m; e.hidden = false; e.scrollIntoView({ block: 'nearest' }); };
+    if (!name) return err('Give this search a name, e.g. “Casino acreage under $800k”.');
+    if (editing.min && editing.max && editing.min > editing.max) return err('The minimum price is above the maximum.');
+    if (views.some((v) => v.name.toLowerCase() === name.toLowerCase() && (asNew || v.id !== editing.id))) return err('You already have a search with that name.');
+    const rec = { ...editing, name };
+    if (asNew) { rec.id = 'v-' + Date.now().toString(36); views.push(rec); }
+    else {
+      const i = views.findIndex((v) => v.id === editing.id);
+      const old = views[i];
+      if (old.name !== name) { for (const e of entries) if (e.suburb === old.name) { e.suburb = name; e.id = `${name}|${e.month}`; } saveEntries(); }
+      views[i] = rec;
+    }
+    prefs.view = rec.id; salesShown = 30;
+    saveViews(); savePrefs(); fDlg.close(); render();
+    toast(asNew ? `Saved “${name}”` : 'Filters updated');
+  }
+  $('#filterForm').addEventListener('submit', (e) => { e.preventDefault(); commitFilters(isNew); });
+  $('#saveAsNew').addEventListener('click', () => {
+    if ($('#fName').value.trim() === currentView()?.name) $('#fName').value += ' (copy)';
+    commitFilters(true);
+  });
+  $('#deleteView').addEventListener('click', () => {
+    if (!confirm(`Delete the saved search “${editing.name}”?`)) return;
+    views = views.filter((v) => v.id !== editing.id);
+    prefs.view = views[0].id; saveViews(); savePrefs(); fDlg.close(); render();
+  });
+
+  // ---------- listing-price entry dialog ----------
   const dlg = $('#entryDialog');
   const form = $('#entryForm');
-  form.suburb.append(...SUBURBS.map((s) => el('option', { value: s.name }, s.name)));
-
   function openEntry(rec) {
+    form.suburb.replaceChildren(...views.map((v) => el('option', { value: v.name }, v.name)));
     const existing = rec && rec.suburb && rec.month ? entries.find((e) => e.suburb === rec.suburb && e.month === rec.month) : null;
     const r = existing || rec || {};
-    form.suburb.value = r.suburb || (prefs.view !== COMPARE ? prefs.view : SUBURBS[0].name);
+    form.suburb.value = r.suburb || currentView()?.name || views[0].name;
     form.month.value = r.month || addMonths(thisMonth(), -1);
-    for (const k of ['median', 'avgSold', 'avgListing', 'sales', 'listings']) form[k].value = r[k] != null ? r[k] : '';
+    form.avgListing.value = r.avgListing ?? '';
+    form.listings.value = r.listings ?? '';
     form.notes.value = r.notes || '';
-    $('#entryTitle').textContent = existing ? `Edit ${existing.suburb} · ${fmtMonth(existing.month)}` : 'Add monthly figures';
+    $('#entryTitle').textContent = existing ? `${existing.suburb} · ${fmtMonth(existing.month)}` : 'Add listing (asking) price';
     $('#deleteEntry').hidden = !existing;
     $('#entryError').hidden = true;
     dlg.dataset.editing = existing ? existing.id : '';
     dlg.showModal();
   }
-
   form.addEventListener('submit', (ev) => {
     ev.preventDefault();
     const err = (msg) => { const e = $('#entryError'); e.textContent = msg; e.hidden = false; };
     const month = parseMonth(form.month.value);
     if (!month) return err('Please choose a month.');
-    const rec = { suburb: form.suburb.value, month, notes: form.notes.value.trim() || undefined };
-    for (const k of ['median', 'avgSold', 'avgListing', 'sales', 'listings']) {
-      const v = parsePrice(form[k].value);
-      if (Number.isNaN(v)) return err(`“${form[k].value}” isn't a number.`);
-      rec[k] = v;
-    }
-    if (rec.median == null && rec.avgSold == null && rec.avgListing == null) return err('Enter at least one price.');
-    // editing and the suburb/month changed → remove the old record
+    const avgListing = parsePrice(form.avgListing.value), listings = parsePrice(form.listings.value);
+    if (Number.isNaN(avgListing) || Number.isNaN(listings)) return err('Please enter numbers only.');
+    if (avgListing == null) return err('Enter the average listing price.');
     const oldId = dlg.dataset.editing;
-    if (oldId && oldId !== `${rec.suburb}|${rec.month}`) entries = entries.filter((e) => e.id !== oldId);
-    upsert(rec);
-    save();
-    dlg.close();
-    prefs.view = rec.suburb; savePrefs();
-    render();
-    toast(`Saved ${rec.suburb} · ${fmtMonth(rec.month)}`);
+    const old = entries.find((e) => e.id === oldId);
+    const rec = { ...(old || {}), suburb: form.suburb.value, month, avgListing, listings, notes: form.notes.value.trim() || undefined };
+    rec.id = `${rec.suburb}|${rec.month}`; rec.updated = new Date().toISOString();
+    entries = entries.filter((e) => e.id !== oldId && e.id !== rec.id);
+    entries.push(rec);
+    saveEntries(); dlg.close(); render();
+    toast(`Saved listing price for ${rec.suburb} · ${fmtMonth(month)}`);
   });
   $('#cancelEntry').addEventListener('click', () => dlg.close());
   $('#deleteEntry').addEventListener('click', () => {
     const id = dlg.dataset.editing;
-    if (!id || !confirm('Delete this month’s figures?')) return;
-    entries = entries.filter((e) => e.id !== id);
-    save(); dlg.close(); render(); toast('Deleted');
+    if (!id || !confirm('Delete this listing price?')) return;
+    entries = entries.filter((e) => e.id !== id); saveEntries(); dlg.close(); render(); toast('Deleted');
   });
   $('#addBtn').addEventListener('click', () => openEntry(null));
 
-  // ---------- import / export ----------
+  // ---------- menu: import / export ----------
   const menu = $('#menuDialog');
   $('#menuBtn').addEventListener('click', () => menu.showModal());
   $('#closeMenu').addEventListener('click', () => menu.close());
-
   function download(name, text, type) {
-    const blob = new Blob([text], { type });
-    const a = el('a', { href: URL.createObjectURL(blob), download: name });
-    document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    const a = el('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name });
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
   const stamp = () => new Date().toISOString().slice(0, 10);
-  const CSV_COLS = ['suburb', 'month', 'median', 'avgSold', 'avgListing', 'sales', 'listings', 'notes'];
   const csvEsc = (v) => { if (v == null) return ''; const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const ENTRY_COLS = ['suburb', 'month', 'avgListing', 'listings', 'notes'];
 
-  $('#exportJson').addEventListener('click', () => {
-    download(`nr-prices-backup-${stamp()}.json`, JSON.stringify({ app: 'nr-prices', version: 1, exported: new Date().toISOString(), entries }, null, 2), 'application/json');
+  $('#exportJson').addEventListener('click', () => download(`nr-prices-backup-${stamp()}.json`, JSON.stringify({ app: 'nr-prices', version: 2, exported: new Date().toISOString(), views, entries }, null, 2), 'application/json'));
+  $('#exportSales').addEventListener('click', () => {
+    const v = currentView();
+    if (!v) return toast('Pick one of your searches first');
+    const rows = salesFor(v).sort((a, b) => b.d - a.d);
+    const lines = ['contract_date,price,street,locality,postcode,type,land_m2,zone',
+      ...rows.map((s) => [String(s.d).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'), s.price, titleCase(s.street), titleCase(s.loc), s.pc, typeName(s.type), s.area ?? '', s.zone].map(csvEsc).join(','))];
+    download(`${v.name.replace(/[^\w]+/g, '-')}-sales-${stamp()}.csv`, lines.join('\n'), 'text/csv');
   });
-  $('#exportCsv').addEventListener('click', () => {
-    const lines = [CSV_COLS.join(','), ...entries.map((e) => CSV_COLS.map((c) => csvEsc(e[c])).join(','))];
-    download(`nr-prices-${stamp()}.csv`, lines.join('\n'), 'text/csv');
-  });
+  $('#exportCsv').addEventListener('click', () => download(`nr-prices-listings-${stamp()}.csv`, [ENTRY_COLS.join(','), ...entries.map((e) => ENTRY_COLS.map((c) => csvEsc(e[c])).join(','))].join('\n'), 'text/csv'));
 
   function parseCsv(text) {
     const rows = []; let row = [], f = '', q = false;
@@ -480,56 +617,48 @@
     if (f || row.length) { row.push(f); rows.push(row); }
     return rows.filter((r) => r.some((x) => x.trim()));
   }
-
-  // returns { added, skipped: [reasons] }
-  function importRecords(list) {
-    let added = 0; const skipped = [];
-    for (const raw of list) {
-      const suburb = matchSuburb(raw.suburb);
-      const month = parseMonth(raw.month);
-      if (!suburb) { skipped.push(`unknown suburb “${raw.suburb}”`); continue; }
-      if (!month) { skipped.push(`bad month “${raw.month}”`); continue; }
-      const rec = { suburb, month, notes: raw.notes ? String(raw.notes).trim() || undefined : undefined };
-      let bad = false;
-      for (const k of ['median', 'avgSold', 'avgListing', 'sales', 'listings']) {
-        const v = parsePrice(raw[k]); if (Number.isNaN(v)) bad = true; rec[k] = Number.isNaN(v) ? null : v;
-      }
-      if (bad || (rec.median == null && rec.avgSold == null && rec.avgListing == null)) { skipped.push(`${suburb} ${month}: no valid prices`); continue; }
-      upsert(rec); added++;
-    }
-    save(); render();
-    return { added, skipped };
-  }
-
   function csvToRecords(text) {
-    const rows = parseCsv(text);
-    if (!rows.length) return [];
+    const rows = parseCsv(text); if (!rows.length) return [];
     const norm = (h) => h.trim().toLowerCase().replace(/[^a-z]/g, '');
-    const aliases = { suburb: 'suburb', month: 'month', date: 'month', median: 'median', mediansold: 'median', medianprice: 'median',
-      avgsold: 'avgSold', averagesold: 'avgSold', averagesoldprice: 'avgSold', avglisting: 'avgListing', averagelisting: 'avgListing',
-      averagelistingprice: 'avgListing', listing: 'avgListing', sales: 'sales', sold: 'sales', numbersold: 'sales', listings: 'listings',
-      activelistings: 'listings', notes: 'notes', source: 'notes' };
-    let header = rows[0].map((h) => aliases[norm(h)]);
-    let body = rows.slice(1);
-    if (!header.includes('suburb') || !header.includes('month')) { header = CSV_COLS; body = rows; } // no header row
+    const alias = { suburb: 'suburb', search: 'suburb', month: 'month', date: 'month', avglisting: 'avgListing', averagelisting: 'avgListing', averagelistingprice: 'avgListing', listing: 'avgListing', listings: 'listings', activelistings: 'listings', notes: 'notes', source: 'notes' };
+    let header = rows[0].map((h) => alias[norm(h)]), body = rows.slice(1);
+    if (!header.includes('suburb') || !header.includes('month')) { header = ENTRY_COLS; body = rows; }
     return body.map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]]).filter(([h]) => h)));
   }
-
-  function reportImport({ added, skipped }) {
-    menu.open && menu.close();
-    toast(`Imported ${added} month${added === 1 ? '' : 's'}${skipped.length ? `, skipped ${skipped.length}` : ''}`);
-    if (skipped.length) console.warn('Skipped rows:', skipped);
+  function importEntries(list) {
+    let added = 0; const skipped = [];
+    for (const raw of list) {
+      const name = String(raw.suburb || '').trim();
+      const v = views.find((x) => x.name.toLowerCase() === name.toLowerCase());
+      const month = parseMonth(raw.month);
+      if (!v) { skipped.push(`no saved search called “${name}”`); continue; }
+      if (!month) { skipped.push(`bad month “${raw.month}”`); continue; }
+      const avgListing = parsePrice(raw.avgListing), listings = parsePrice(raw.listings);
+      if (avgListing == null || Number.isNaN(avgListing)) { skipped.push(`${v.name} ${month}: no listing price`); continue; }
+      const rec = { suburb: v.name, month, avgListing, listings: Number.isNaN(listings) ? null : listings, notes: raw.notes ? String(raw.notes).trim() || undefined : undefined };
+      rec.id = `${rec.suburb}|${month}`; rec.updated = new Date().toISOString();
+      entries = entries.filter((e) => e.id !== rec.id); entries.push(rec); added++;
+    }
+    saveEntries(); render();
+    return { added, skipped };
   }
+  const report = ({ added, skipped }) => { if (menu.open) menu.close(); toast(`Imported ${added} row${added === 1 ? '' : 's'}${skipped.length ? `, skipped ${skipped.length}` : ''}`); };
 
   $('#importFile').addEventListener('change', async (ev) => {
     const file = ev.target.files[0]; ev.target.value = '';
     if (!file) return;
     const text = await file.text();
     try {
-      let list;
-      if (/^\s*[[{]/.test(text)) { const j = JSON.parse(text); list = Array.isArray(j) ? j : j.entries; if (!Array.isArray(list)) throw new Error('No entries in file'); }
-      else list = csvToRecords(text);
-      reportImport(importRecords(list));
+      if (/^\s*[[{]/.test(text)) {
+        const j = JSON.parse(text);
+        if (Array.isArray(j.views) && j.views.length) {
+          for (const v of j.views) { const i = views.findIndex((x) => x.id === v.id || x.name === v.name); if (i >= 0) views[i] = v; else views.push(v); }
+          saveViews();
+        }
+        const list = Array.isArray(j) ? j : j.entries;
+        if (!Array.isArray(list)) throw new Error('no entries in file');
+        report(importEntries(list));
+      } else report(importEntries(csvToRecords(text)));
     } catch (e) { toast('Could not read that file: ' + e.message); }
   });
 
@@ -538,28 +667,26 @@
   $('#cancelPaste').addEventListener('click', () => pasteDlg.close());
   $('#pasteForm').addEventListener('submit', (ev) => {
     ev.preventDefault();
-    const res = importRecords(csvToRecords(ev.target.csv.value));
+    const res = importEntries(csvToRecords(ev.target.csv.value));
     if (!res.added) { const e = $('#pasteError'); e.textContent = res.skipped[0] ? `Nothing imported: ${res.skipped[0]}` : 'Nothing to import.'; e.hidden = false; return; }
-    ev.target.csv.value = ''; pasteDlg.close(); reportImport(res);
+    ev.target.csv.value = ''; pasteDlg.close(); report(res);
   });
-
+  $('#resetViews').addEventListener('click', () => {
+    if (!confirm('Restore the four starting searches (Casino, Lismore, Evans Head, Ballina)? Your other saved searches are kept.')) return;
+    for (const d of DEFAULT_VIEWS) { const i = views.findIndex((v) => v.id === d.id); if (i >= 0) views[i] = structuredClone(d); else views.push(structuredClone(d)); }
+    saveViews(); menu.close(); render();
+  });
   $('#clearAll').addEventListener('click', () => {
-    if (!entries.length) return toast('Nothing to delete');
-    if (!confirm(`Delete all ${entries.length} monthly records from this phone? Export a backup first if you might want them.`)) return;
-    entries = []; save(); menu.close(); render(); toast('All data deleted');
+    if (!entries.length) return toast('No listing prices to delete');
+    if (!confirm(`Delete all ${entries.length} listing prices you've entered? Export a backup first if you might want them.`)) return;
+    entries = []; saveEntries(); menu.close(); render(); toast('Deleted');
   });
 
-  // close dialogs when tapping the backdrop
-  for (const d of document.querySelectorAll('dialog')) {
-    d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
-  }
-
+  for (const d of document.querySelectorAll('dialog')) d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
   let resizeT;
   window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(renderChart, 120); });
 
   render();
-
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
+  loadSales();
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

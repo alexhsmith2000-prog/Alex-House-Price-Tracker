@@ -1,61 +1,58 @@
 # Northern Rivers Prices
 
-A small phone app (installable web app / PWA) for tracking house prices in
-**Casino, Lismore, Evans Head and Ballina** month by month:
+A phone app (installable web app) for tracking house prices around **Casino, Lismore, Evans Head,
+Ballina** and the rest of the Northern Rivers.
 
-- **Median sold price**, **average sold price** and **average listing (asking) price**
-- Optional number sold and active listings
-- Trend chart per suburb (1Y / 2Y / 5Y / All), with change vs 12 months ago
-- "Compare all" view to put the four towns on one chart
-- Highlights months missing from the last two years so you know what to fill in
-- Works offline; no account, no server — data stays on your phone
-- Export / import backups (JSON or CSV) and paste CSV rows for bulk entry
+## What it does
+
+- **Saved searches.** Each search has an **area**, optional **locations** within it, **property types**
+  and a **min/max price**. It starts with Casino, Lismore, Evans Head and Ballina, and you can add your own
+  (e.g. "Casino acreage under $1m").
+- **Property types:** House in town · Unit / townhouse · Vacant block (town) · Rural lifestyle / acreage ·
+  Farm (40 ha+) · Commercial / other. These are worked out from zoning, land size, strata title and land use
+  in the sales records (the rules are listed in the app's ⋯ menu).
+- **Sold prices.** Monthly median and average with the number of sales, a 3-month rolling option,
+  1/2/3-year charts, change against the same months a year earlier, and a list of every matching sale.
+- **Compare** puts all your saved searches on one chart.
+- **Listing (asking) prices** can be added by hand for any search and show as a dashed line.
+- Works offline. Saved searches and listing prices stay on your phone (⋯ → Export backup).
+
+## Where the sold prices come from
+
+`scripts/fetch_sales.py` downloads the **NSW Valuer General's bulk property sales information**. This is the
+official public record of every NSW sale (contract date, price, street, locality, zoning, land area). It keeps
+the Northern Rivers postcodes (2469–2480) from 2024 onwards and writes `data/sales.json`, which the app reads.
+
+Sales take about 4–8 weeks to appear in the records, so the last two months are marked as incomplete.
+
+### Updating the data
+
+The Valuer General's server currently **refuses downloads from GitHub's servers** (HTTP 403), so the
+GitHub workflow can't fetch the data on its own. Its daily schedule is switched off for now. Instead, run
+the script from your own computer (Python 3 only, nothing to install):
+
+```
+python3 scripts/fetch_sales.py
+git add data && git commit -m "Update sales data" && git push
+```
+
+Pushing publishes the update to the app. After the first run, each run only downloads the new weekly files.
 
 ## Put it on your phone
 
 1. In the GitHub repo go to **Settings → Pages** and set **Source** to **GitHub Actions**.
-   (GitHub Pages on a private repo needs a paid GitHub plan; otherwise make the repo public —
-   your price data is *not* in the repo, it lives only on your phone.)
-2. The included workflow (`.github/workflows/pages.yml`) publishes the site on every push.
-   The address will be `https://<your-username>.github.io/<repo-name>/`.
-3. Open that address on your phone:
-   - **iPhone (Safari):** Share → **Add to Home Screen**
-   - **Android (Chrome):** ⋮ menu → **Add to Home screen / Install app**
+   (Pages on a private repo needs a paid GitHub plan. On the free plan, make the repo public.)
+2. Every push to the branch publishes the app at `https://<username>.github.io/<repo>/`.
+3. Open that address on your phone. On iPhone, use Safari's Share button and then **Add to Home Screen**.
+   On Android, use Chrome's ⋮ menu and then **Install app**.
 
-It then opens full-screen like a normal app and works without internet.
+## Costs
 
-## Filling in the last couple of years
-
-Typing 24 months × 4 towns by hand is tedious, so the fastest way is a spreadsheet:
-
-1. Make a sheet with these columns (month is `YYYY-MM`):
-
-   ```
-   suburb,month,median,avgSold,avgListing,sales,listings,notes
-   Ballina,2026-09,895000,930000,989000,31,142,Domain
-   ```
-2. Save as CSV and use **⋯ → Import backup or CSV**, or copy the rows and use **⋯ → Paste CSV rows**.
-
-After that, add each new month with **+ Add month** (prices can be typed as `585000`, `$585,000` or `585k`).
-Tap any row in the table to edit or delete it.
-
-### Where to get the numbers
-
-| Figure | Sources |
-| --- | --- |
-| Median sold | realestate.com.au / Domain suburb profiles, Cotality (CoreLogic) reports, NSW Valuer General property sales data |
-| Average sold | Average the month's sold results on realestate.com.au or Domain, or NSW Valuer General sales data |
-| Average listing | Average current "Buy" listing prices, or SQM Research asking prices |
-
-Use the same source each month so the trend lines stay comparable.
-
-## Backups
-
-Data is kept in the browser storage of your phone. Use **⋯ → Export backup (JSON)** every so often
-(e.g. save it to iCloud Drive / Google Drive). If you change phones, import that file on the new one.
+GitHub Actions and Pages are free for public repos. Private repos get 2,000 free Actions minutes a month,
+and a daily run uses about 1–2 minutes. The Valuer General data is free.
 
 ## Files
 
-`index.html`, `styles.css`, `app.js` — the app (plain HTML/CSS/JS, no build step).
-`sw.js` + `manifest.webmanifest` — offline support and home-screen install.
-When you change app files, bump `VERSION` in `sw.js` so phones fetch the update.
+`index.html`, `styles.css`, `app.js` make up the app (plain HTML/CSS/JS, no build step). `sw.js` and
+`manifest.webmanifest` provide offline use and home-screen install (bump `VERSION` in `sw.js` after changing
+app files). `scripts/fetch_sales.py` is the data downloader. `data/` holds the sales data.

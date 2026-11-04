@@ -33,7 +33,6 @@ POSTCODES = set(os.environ.get("POSTCODES", "2469,2470,2471,2472,2473,2474,2475,
 
 INDEX_PAGES = [
     "https://valuation.property.nsw.gov.au/embed/propertySalesInformation",
-    "https://www.valuergeneral.nsw.gov.au/land_value_summaries/lv.php",
 ]
 BASE = "https://www.valuergeneral.nsw.gov.au/__psi"
 UA = "Mozilla/5.0 (compatible; northern-rivers-price-tracker/1.0; +https://github.com)"
@@ -47,6 +46,10 @@ def log(*a):
     print(*a, flush=True)
 
 
+class Blocked(Exception):
+    """The server refused us (HTTP 403)."""
+
+
 def get(url, tries=4):
     for i in range(tries):
         try:
@@ -56,6 +59,8 @@ def get(url, tries=4):
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 return None
+            if e.code == 403:
+                raise Blocked(url)
             log(f"  HTTP {e.code} for {url} (try {i + 1})")
         except Exception as e:  # network hiccup
             log(f"  {type(e).__name__}: {e} for {url} (try {i + 1})")
@@ -69,7 +74,7 @@ def discover():
     for page in INDEX_PAGES:
         try:
             html = get(page, tries=2)
-        except RuntimeError:
+        except (RuntimeError, Blocked):
             html = None
         if not html:
             continue
@@ -240,7 +245,13 @@ def main():
 
     changed = 0
     for k in todo:
-        blob = get(files[k])
+        try:
+            blob = get(files[k])
+        except Blocked as e:
+            log(f"BLOCKED: the Valuer General server refused the download ({e}).")
+            log("It does not allow downloads from this machine. Run this script on your own computer,")
+            log("or import the weekly file in the app instead. Nothing was changed.")
+            sys.exit(2)
         if blob is None:
             # not published (yet): only remember 404s for weeks more than 3 weeks old
             if k.startswith("weekly/"):

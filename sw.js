@@ -1,5 +1,5 @@
 // Offline cache. Bump VERSION whenever app files change so phones pick up the update.
-const VERSION = 'nr-prices-v1';
+const VERSION = 'nr-prices-v2';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 

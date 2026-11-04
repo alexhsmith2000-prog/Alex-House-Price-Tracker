@@ -1,12 +1,14 @@
 name: Update sales data and deploy
 
 on:
-  schedule:
-    - cron: "17 19 * * *"   # daily, ~5:17am Sydney time
+  # Daily schedule is switched off: the NSW Valuer General server currently refuses downloads
+  # from GitHub's servers (HTTP 403). Put these two lines back if that changes:
+  # schedule:
+  #   - cron: "17 19 * * *"   # daily, ~5:17am Sydney time
   workflow_dispatch:
   push:
     branches: [main, claude/northern-rivers-housing-tracker-yj20s8]
-    paths-ignore: ["data/**", "README.md"]
+    paths-ignore: ["README.md"]
 
 permissions:
   contents: write
@@ -27,8 +29,11 @@ jobs:
         with:
           python-version: "3.12"
       - name: Fetch NSW Valuer General sales
+        id: fetch
+        continue-on-error: true   # still deploy the app if the source is unreachable
         run: python scripts/fetch_sales.py
       - name: Commit new data
+        if: steps.fetch.outcome == 'success'
         run: |
           if git diff --quiet -- data/sales_db.csv.gz && git ls-files --error-unmatch data/sales_db.csv.gz >/dev/null 2>&1; then
             echo "No new sales data."

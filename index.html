@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Northern Rivers Prices</title>
-  <meta name="description" content="Track monthly listing, sold and median house prices in Casino, Lismore, Evans Head and Ballina.">
+  <meta name="description" content="Track sold house prices in Casino, Lismore, Evans Head, Ballina and the Northern Rivers, filtered by location, price range and property type.">
   <meta name="theme-color" content="#0f6b5c">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -19,76 +19,105 @@
   <header class="top">
     <div>
       <h1>Northern Rivers Prices</h1>
-      <p class="sub" id="lastUpdated">No data yet</p>
+      <p class="sub" id="lastUpdated">Loading…</p>
     </div>
     <button class="icon-btn" id="menuBtn" aria-label="Data and settings">⋯</button>
   </header>
 
-  <nav class="chips" id="suburbChips" aria-label="Suburb"></nav>
+  <nav class="chips" id="viewChips" aria-label="Saved searches"></nav>
 
   <main>
+    <section class="filterbar" id="filterBar"></section>
+
     <section class="cards" id="statCards" aria-live="polite"></section>
 
     <section class="panel">
       <div class="panel-head">
-        <div class="seg" id="metricSeg" role="tablist" aria-label="Metric"></div>
-        <div class="seg small" id="rangeSeg" role="tablist" aria-label="Range"></div>
+        <div class="seg" id="metricSeg" role="tablist" aria-label="Measure"></div>
+        <div class="seg small" id="rangeSeg" role="tablist" aria-label="Time range"></div>
       </div>
       <div id="chart" class="chart"></div>
       <div id="legend" class="legend"></div>
+      <div class="panel-foot"><div class="seg small" id="smoothSeg" role="tablist" aria-label="Smoothing"></div></div>
     </section>
 
-    <section class="panel" id="gapPanel" hidden></section>
-
     <section class="panel">
-      <div class="panel-head">
-        <h2 id="tableTitle">Monthly figures</h2>
-      </div>
-      <div class="table-wrap">
-        <table id="table"></table>
-      </div>
+      <div class="panel-head"><h2 id="tableTitle">By month</h2></div>
+      <div class="table-wrap"><table id="table"></table></div>
+      <p class="hint" id="tableNote"></p>
+    </section>
+
+    <section class="panel" id="salesPanel" hidden>
+      <div class="panel-head"><h2 id="salesTitle">Sales</h2></div>
+      <ul class="sales" id="salesList"></ul>
+      <button class="ghost block" id="moreSales" hidden>Show more</button>
     </section>
   </main>
 
-  <button class="fab" id="addBtn" aria-label="Add monthly figures">+ Add month</button>
+  <button class="fab" id="addBtn" aria-label="Add a listing price">+ Listing price</button>
 
-  <!-- Add / edit entry -->
+  <!-- Filters / saved search -->
+  <dialog id="filterDialog" class="sheet">
+    <form method="dialog" id="filterForm">
+      <div class="sheet-head"><h2 id="filterTitle">Filters</h2><span class="hint" id="fCount"></span></div>
+      <div class="sheet-body">
+        <label>Name of this search
+          <input type="text" id="fName" placeholder="e.g. Casino acreage under $800k" maxlength="40">
+        </label>
+        <label>Area
+          <select id="fArea"></select>
+        </label>
+        <div class="field">
+          <div class="field-head"><span id="fLocLabel">Locations</span><button type="button" class="link" id="fLocAll">Clear (use whole area)</button></div>
+          <input type="search" id="fLocSearch" placeholder="Search locations…">
+          <div class="checklist" id="fLocs"></div>
+        </div>
+        <div class="field">
+          <div class="field-head"><span>Property type</span></div>
+          <div class="checkgrid" id="fTypes"></div>
+        </div>
+        <div class="row2">
+          <label>Min price <select id="fMin"></select></label>
+          <label>Max price <select id="fMax"></select></label>
+        </div>
+        <p class="error" id="filterError" hidden></p>
+      </div>
+      <div class="actions sheet-foot">
+        <button type="button" class="ghost danger" id="deleteView" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="saveAsNew">Save as new</button>
+        <button type="button" class="ghost" id="cancelFilters">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Listing (asking) price entry -->
   <dialog id="entryDialog">
     <form method="dialog" id="entryForm">
-      <h2 id="entryTitle">Add monthly figures</h2>
-      <label>Suburb
+      <h2 id="entryTitle">Add listing (asking) price</h2>
+      <label>Search
         <select name="suburb" required></select>
       </label>
       <label>Month
         <input type="month" name="month" required>
       </label>
-      <label>Median sold price
-        <input type="text" inputmode="numeric" name="median" placeholder="e.g. 585000">
-      </label>
-      <label>Average sold price
-        <input type="text" inputmode="numeric" name="avgSold" placeholder="e.g. 610000">
-      </label>
       <label>Average listing (asking) price
-        <input type="text" inputmode="numeric" name="avgListing" placeholder="e.g. 649000">
+        <input type="text" inputmode="numeric" name="avgListing" placeholder="e.g. 649000 or 649k">
       </label>
-      <div class="row2">
-        <label>Number sold
-          <input type="text" inputmode="numeric" name="sales" placeholder="optional">
-        </label>
-        <label>Active listings
-          <input type="text" inputmode="numeric" name="listings" placeholder="optional">
-        </label>
-      </div>
+      <label>Number of active listings
+        <input type="text" inputmode="numeric" name="listings" placeholder="optional">
+      </label>
       <label>Source / notes
-        <input type="text" name="notes" placeholder="e.g. Domain suburb profile">
+        <input type="text" name="notes" placeholder="e.g. Domain, 18 houses for sale">
       </label>
-      <p class="hint">Leave any field blank if you don't have it. Prices can include $ and commas, or "585k".</p>
+      <p class="hint">Sold prices fill in automatically. Asking prices aren't in the public data, so add them here if you want to track them.</p>
       <p class="error" id="entryError" hidden></p>
       <div class="actions">
         <button type="button" class="ghost danger" id="deleteEntry" hidden>Delete</button>
         <span class="spacer"></span>
-        <button type="button" class="ghost" value="cancel" id="cancelEntry">Cancel</button>
-        <button type="submit" class="primary" value="save">Save</button>
+        <button type="button" class="ghost" id="cancelEntry">Cancel</button>
+        <button type="submit" class="primary">Save</button>
       </div>
     </form>
   </dialog>
@@ -97,37 +126,42 @@
   <dialog id="menuDialog">
     <div class="menu">
       <h2>Your data</h2>
-      <p class="hint">Figures are stored on this phone only. Export a backup now and then so you never lose your history.</p>
-      <button class="primary block" id="exportJson">Export backup (JSON)</button>
-      <button class="ghost block" id="exportCsv">Export spreadsheet (CSV)</button>
+      <p class="hint">Sold prices come from the NSW Valuer General's public sales records. Your saved searches and listing prices are stored on this phone only, so export a backup now and then.</p>
+      <button class="primary block" id="exportJson">Export backup (searches + listing prices)</button>
+      <button class="ghost block" id="exportSales">Export this search's sales (CSV)</button>
+      <button class="ghost block" id="exportCsv">Export listing prices (CSV)</button>
       <label class="ghost block file">Import backup or CSV
         <input type="file" id="importFile" accept=".json,.csv,text/csv,application/json">
       </label>
-      <button class="ghost block" id="pasteCsvBtn">Paste CSV rows</button>
+      <button class="ghost block" id="pasteCsvBtn">Paste listing-price rows</button>
       <details>
-        <summary>CSV format</summary>
-        <pre class="code">suburb,month,median,avgSold,avgListing,sales,listings,notes
-Ballina,2026-09,895000,930000,989000,31,142,Domain</pre>
-        <p class="hint">Month is YYYY-MM. Rows for a suburb and month you already have will replace the old figures.</p>
-      </details>
-      <details>
-        <summary>Where to find the numbers</summary>
+        <summary>How property types are worked out</summary>
         <ul class="sources">
-          <li><b>Median sold:</b> realestate.com.au or Domain suburb profiles, Cotality (CoreLogic) reports, NSW Valuer General sales data.</li>
-          <li><b>Average sold:</b> average the "Sold" results for the month on realestate.com.au / Domain, or use NSW Valuer General sales data.</li>
-          <li><b>Average listing:</b> average the asking prices of current "Buy" listings, or SQM Research asking-price data.</li>
+          <li><b>Unit / townhouse:</b> strata title.</li>
+          <li><b>House in town:</b> residential or village zoning (R1–R4, RU5), not vacant.</li>
+          <li><b>Vacant block (town):</b> town zoning, recorded as vacant land.</li>
+          <li><b>Rural lifestyle / acreage:</b> rural, large-lot residential (R5) or conservation zoning, or 4,000 m²+ outside town zones, under 40 ha.</li>
+          <li><b>Farm:</b> 40 ha or more of rural land, or recorded as farming use on 10 ha+.</li>
+          <li><b>Commercial / other:</b> business, industrial or special-use zoning or use.</li>
         </ul>
       </details>
+      <details>
+        <summary>Listing-price CSV format</summary>
+        <pre class="code">suburb,month,avgListing,listings,notes
+Ballina,2026-09,989000,142,Domain</pre>
+        <p class="hint">"suburb" is the name of one of your saved searches. Month is YYYY-MM.</p>
+      </details>
       <hr>
-      <button class="ghost danger block" id="clearAll">Delete all data</button>
+      <button class="ghost block" id="resetViews">Restore the starting searches</button>
+      <button class="ghost danger block" id="clearAll">Delete all listing prices</button>
       <div class="actions"><span class="spacer"></span><button class="ghost" id="closeMenu">Close</button></div>
     </div>
   </dialog>
 
   <dialog id="pasteDialog">
     <form method="dialog" id="pasteForm">
-      <h2>Paste CSV rows</h2>
-      <textarea name="csv" rows="8" placeholder="suburb,month,median,avgSold,avgListing,sales,listings,notes"></textarea>
+      <h2>Paste listing-price rows</h2>
+      <textarea name="csv" rows="8" placeholder="suburb,month,avgListing,listings,notes"></textarea>
       <p class="error" id="pasteError" hidden></p>
       <div class="actions"><span class="spacer"></span>
         <button type="button" class="ghost" id="cancelPaste">Cancel</button>
@@ -137,7 +171,6 @@ Ballina,2026-09,895000,930000,989000,31,142,Domain</pre>
   </dialog>
 
   <div class="toast" id="toast" role="status" hidden></div>
-
   <script src="app.js"></script>
 </body>
 </html>
