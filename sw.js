@@ -1,7 +1,8 @@
 // Offline cache. Bump VERSION whenever app files change so phones pick up the update.
-const VERSION = 'nr-prices-v3';
+const VERSION = 'nr-prices-v4';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
-  'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
+  'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
+  'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

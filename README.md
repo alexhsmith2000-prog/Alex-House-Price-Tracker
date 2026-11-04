@@ -46,6 +46,19 @@ On a computer you can instead run `python3 scripts/fetch_sales.py`, which writes
 Pushing that file publishes it to everyone who uses the app, and the app merges it with anything
 imported on the phone.
 
+## Map and parts of town
+
+Each sale is placed on the map by matching its street, house number and suburb against **G-NAF**, the free
+national address file (Geoscape Australia, open data on data.gov.au). `scripts/build_geo.py` runs on GitHub
+every quarter, when G-NAF is updated. It keeps the Northern Rivers addresses (about 65,000) and writes
+`data/geo.json` (about 1.5 MB).
+
+In a search's **Filters**, use **Map area → Draw on map** to tap out the corners of part of town, or drop a pin
+and choose a distance. Only sales inside that area count. Sales that can't be placed (mostly lot-only rural
+addresses) are left out of map-area searches, and the filter screen says how many.
+
+Map images © OpenStreetMap contributors. The map library (Leaflet) is bundled in `vendor/`.
+
 ## Put it on your phone
 
 1. In the GitHub repo go to **Settings → Pages** and set **Source** to **GitHub Actions**.

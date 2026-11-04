@@ -137,8 +137,8 @@
 
   function decodeServer(json) {
     const L = json.localities, Z = json.zones, P = json.purposes, St = json.streets;
-    SERVER = json.sales.map(([d, li, price, area, zi, nature, pi, strata, si]) => ({
-      d, loc: L[li][0], pc: L[li][1], price, area, zone: Z[zi] || '', nature: nature || '', purpose: P[pi] || '', strata: !!strata, street: St[si] || '',
+    SERVER = json.sales.map(([d, li, price, area, zi, nature, pi, strata, si, house]) => ({
+      d, loc: L[li][0], pc: L[li][1], price, area, zone: Z[zi] || '', nature: nature || '', purpose: P[pi] || '', strata: !!strata, street: St[si] || '', house: house || '',
     }));
     SERVER_GENERATED = json.generated;
   }
@@ -152,12 +152,13 @@
       const ds = String(s.d);
       s.m = `${ds.slice(0, 4)}-${ds.slice(4, 6)}`;
       s.type = classify(s);
+      placeSale(s);
       list.push(s);
     };
     for (const r of Object.values(LOCAL.records)) {
-      const [d, loc, pc, price, area, zone, nature, purpose, strata, street, , dealing] = r;
+      const [d, loc, pc, price, area, zone, nature, purpose, strata, street, , dealing, house] = r;
       if (dealing) { const dk = `${dealing}|${price}`; if (dealings.has(dk)) continue; dealings.add(dk); } // one dealing, several lots
-      add({ d, loc, pc, price, area, zone, nature, purpose, strata: !!strata, street });
+      add({ d, loc, pc, price, area, zone, nature, purpose, strata: !!strata, street, house: house || '' });
     }
     for (const s of SERVER) add({ ...s });
     SALES = list;
@@ -174,13 +175,65 @@
   async function loadSales() {
     const stored = await idbGet('local-sales');
     if (stored && stored.records) LOCAL = stored;
-    try {
-      const res = await fetch('data/sales.json', { cache: 'no-cache' });
-      if (res.ok) decodeServer(await res.json());
-    } catch { /* no published data: fine */ }
+    const [salesRes, geoRes] = await Promise.allSettled([fetch('data/sales.json', { cache: 'no-cache' }), fetch('data/geo.json')]);
+    try { if (salesRes.value && salesRes.value.ok) decodeServer(await salesRes.value.json()); } catch { /* no published data: fine */ }
+    try { if (geoRes.value && geoRes.value.ok) loadGeo(await geoRes.value.json()); } catch { /* map positions unavailable */ }
     rebuildSales();
     render();
   }
+
+  // ---------- map positions (G-NAF addresses, built on GitHub into data/geo.json) ----------
+  let GEO = null;
+  function loadGeo(json) {
+    const byName = new Map();
+    for (const k of Object.keys(json.streets)) {
+      const nk = k.slice(0, k.lastIndexOf('|'));
+      byName.set(nk, byName.has(nk) ? null : k); // null = several street types share the name: ambiguous
+    }
+    // common abbreviations in the sales records that the address file spells differently
+    const extra = { AVE: 'AVENUE', AV: 'AVENUE', CRES: 'CRESCENT', CR: 'CRESCENT', CCT: 'CIRCUIT', HWY: 'HIGHWAY', TCE: 'TERRACE', BVD: 'BOULEVARD', BLVD: 'BOULEVARD',
+      ESP: 'ESPLANADE', GR: 'GROVE', GRV: 'GROVE', PKWY: 'PARKWAY', PWY: 'PARKWAY', CL: 'CLOSE', CT: 'COURT', DR: 'DRIVE', PL: 'PLACE', RD: 'ROAD', ST: 'STREET', LN: 'LANE', SQ: 'SQUARE', WY: 'WAY', RDGE: 'RIDGE', CTR: 'CENTRE' };
+    GEO = { types: { ...extra, ...(json.types || {}) }, streets: json.streets, byName, scale: json.scale || 1e5 };
+  }
+  function placeSale(s) {
+    s.lat = s.lon = null; s.approx = false;
+    if (!GEO || !s.street) return;
+    const num = parseInt((String(s.house).match(/\d+/) || [])[0], 10);
+    if (!num) return;
+    const toks = s.street.trim().split(/\s+/);
+    let name = s.street.trim(), typ = '';
+    if (toks.length > 1 && GEO.types[toks[toks.length - 1]]) { typ = GEO.types[toks.pop()]; name = toks.join(' '); }
+    let arr = GEO.streets[`${s.loc}|${name}|${typ}`];
+    if (!arr) { const k = GEO.byName.get(`${s.loc}|${name}`) || GEO.byName.get(`${s.loc}|${s.street.trim()}`); if (k) arr = GEO.streets[k]; }
+    if (!arr) return;
+    // exact number, else the nearest number on the same side of the street
+    let best = -1, bestDiff = Infinity;
+    for (let i = 0; i < arr.length; i += 3) {
+      const diff = Math.abs(arr[i] - num) + ((arr[i] - num) % 2 ? 0.5 : 0);
+      if (diff < bestDiff) { bestDiff = diff; best = i; if (diff === 0) break; }
+    }
+    if (best < 0 || bestDiff > 10) return;
+    s.lat = arr[best + 1] / GEO.scale; s.lon = arr[best + 2] / GEO.scale; s.approx = bestDiff > 0;
+  }
+  const toRad = (d) => d * Math.PI / 180;
+  const distM = (a, b, c, d) => { const R = 6371e3, x = toRad(c - a), y = toRad(d - b); const h = Math.sin(x / 2) ** 2 + Math.cos(toRad(a)) * Math.cos(toRad(c)) * Math.sin(y / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+  function inPoly(lat, lon, pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [yi, xi] = pts[i], [yj, xj] = pts[j];
+      if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  const inShape = (shape, lat, lon) => shape.type === 'circle' ? distM(shape.c[0], shape.c[1], lat, lon) <= shape.r : inPoly(lat, lon, shape.pts);
+  function polyAreaKm2(pts) { // small areas: flat projection is fine
+    const lat0 = toRad(pts.reduce((s, p) => s + p[0], 0) / pts.length);
+    const xy = pts.map(([la, lo]) => [toRad(lo) * 6371 * Math.cos(lat0), toRad(la) * 6371]);
+    let a = 0; for (let i = 0, j = xy.length - 1; i < xy.length; j = i++) a += (xy[j][0] + xy[i][0]) * (xy[j][1] - xy[i][1]);
+    return Math.abs(a / 2);
+  }
+  const fmtDist = (m) => m >= 1000 ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} km` : `${Math.round(m)} m`;
+  const shapeLabel = (sh) => !sh ? null : sh.type === 'circle' ? `Within ${fmtDist(sh.r)} of a pin` : `Drawn area (${polyAreaKm2(sh.pts).toFixed(polyAreaKm2(sh.pts) < 10 ? 1 : 0)} km²)`;
 
   // ---------- IndexedDB (imported sales can be a few MB: too big for localStorage) ----------
   let dbPromise;
@@ -264,7 +317,7 @@
       const area = isFinite(a) ? Math.round(a * (f[12].trim().toUpperCase() === 'H' ? 10000 : 1)) : null;
       const key = `${f[1].trim()}|${f[2].trim()}|${f[3].trim()}|${contract}`;
       const rec = [+contract, f[9].trim().toUpperCase(), pc, price, area, f[16].trim().toUpperCase(), f[17].trim().toUpperCase().slice(0, 1),
-        f[18].trim().toUpperCase(), f[19].trim() ? 1 : 0, f[8].trim().toUpperCase(), f[4].trim(), f[23].trim()];
+        f[18].trim().toUpperCase(), f[19].trim() ? 1 : 0, f[8].trim().toUpperCase(), f[4].trim(), f[23].trim(), f[7].trim()];
       const old = out[key];
       if (!old || rec[10] >= old[10]) { out[key] = rec; n++; }
     }
@@ -351,8 +404,10 @@
     const area = areaOf(v.area);
     const locs = v.locs && v.locs.length ? new Set(v.locs) : null;
     const types = v.types && v.types.length ? new Set(v.types) : null;
+    const shape = v.shape && !v.ignoreShape ? v.shape : null;
     return (s) => (!area.pcs || area.pcs.includes(s.pc)) && (!locs || locs.has(s.loc)) && (!types || types.has(s.type)) &&
-      (!v.min || s.price >= v.min) && (!v.max || s.price <= v.max);
+      (!v.min || s.price >= v.min) && (!v.max || s.price <= v.max) &&
+      (!shape || (s.lat != null && inShape(shape, s.lat, s.lon)));
   };
   const salesFor = (v) => SALES.filter(matcher(v));
 
@@ -377,7 +432,7 @@
 
   function render() {
     renderHeader(); renderChips(); renderFilterBar(); renderSegs();
-    renderCards(); renderChart(); renderTable(); renderSalesList();
+    renderCards(); renderChart(); renderMapPanel(); renderTable(); renderSalesList();
   }
 
   function renderHeader() {
@@ -400,7 +455,8 @@
 
   function filterSummary(v) {
     const area = areaOf(v.area);
-    const where = v.locs && v.locs.length ? (v.locs.length <= 2 ? v.locs.map(titleCase).join(', ') : `${v.locs.length} locations · ${area.name}`) : area.name;
+    let where = v.locs && v.locs.length ? (v.locs.length <= 2 ? v.locs.map(titleCase).join(', ') : `${v.locs.length} locations · ${area.name}`) : area.name;
+    if (v.shape) where += ` · ${shapeLabel(v.shape)}`;
     const types = !v.types || !v.types.length || v.types.length === TYPES.length ? 'All property types' : v.types.map(typeName).join(', ');
     const price = v.min && v.max ? `${fmtShort(v.min)}–${fmtShort(v.max)}` : v.min ? `${fmtShort(v.min)}+` : v.max ? `Up to ${fmtShort(v.max)}` : 'Any price';
     return { where, types, price };
@@ -630,13 +686,165 @@
     more.onclick = () => { salesShown += 50; renderSalesList(); };
   }
 
+  // ---------- maps (Leaflet, bundled in vendor/) ----------
+  const NR_CENTER = [-28.83, 153.25];
+  const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || '#0f6b5c';
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const MAX_DOTS = 4000;
+  function makeMap(elm) {
+    const m = L.map(elm, { preferCanvas: true, tap: true }).setView(NR_CENTER, 9);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · G-NAF',
+    }).addTo(m);
+    return m;
+  }
+  // colour dots by price: lower third / middle / upper third of the sales shown
+  function priceBands(list) {
+    const p = list.map((s) => s.price).sort((a, b) => a - b);
+    return p.length ? [p[Math.floor(p.length / 3)], p[Math.floor((2 * p.length) / 3)]] : [0, 0];
+  }
+  function addDots(layer, list, opts = {}) {
+    const [t1, t2] = priceBands(list);
+    const cols = [cssVar('--s2'), cssVar('--s3'), cssVar('--s5')];
+    const shown = list.filter((s) => s.lat != null).sort((a, b) => b.d - a.d).slice(0, MAX_DOTS);
+    for (const s of shown) {
+      const c = s.price <= t1 ? cols[0] : s.price <= t2 ? cols[1] : cols[2];
+      const mk = L.circleMarker([s.lat, s.lon], { radius: opts.small ? 4 : 5.5, weight: 1, color: '#ffffff', fillColor: c, fillOpacity: opts.faint ? 0.45 : 0.9, interactive: !opts.faint });
+      if (!opts.faint) mk.bindPopup(`<b>${fmtMoney(s.price)}</b> · ${fmtDate(s.d)}<br>${esc(s.house ? s.house + ' ' : '')}${esc(titleCase(s.street))}, ${esc(titleCase(s.loc))}<br><span style="opacity:.7">${esc(typeName(s.type))}${s.area ? ' · ' + fmtArea(s.area) : ''}${s.approx ? ' · position approximate' : ''}</span>`);
+      mk.addTo(layer);
+    }
+    return { shown: shown.length, bands: [t1, t2], cols };
+  }
+  function shapeLayer(shape) {
+    const style = { color: cssVar('--accent'), weight: 2.5, dashArray: '6 5', fillOpacity: 0.08 };
+    if (!shape) return null;
+    return shape.type === 'circle' ? L.circle(shape.c, { ...style, radius: shape.r }) : L.polygon(shape.pts, style);
+  }
+
+  let mainMap = null, mainLayer = null, lastFit = '';
+  function renderMapPanel() {
+    const panel = $('#mapPanel');
+    const v = currentView();
+    if (!v || !SALES.length || typeof L === 'undefined') { panel.hidden = true; return; }
+    panel.hidden = false;
+    if (!mainMap) { mainMap = makeMap($('#map')); mainLayer = L.layerGroup().addTo(mainMap); }
+    mainLayer.clearLayers();
+    const list = salesFor(v);
+    const placed = list.filter((s) => s.lat != null);
+    const res = addDots(mainLayer, list);
+    const sl = shapeLayer(v.shape); if (sl) sl.addTo(mainLayer);
+    const leg = $('#mapLegend'); leg.replaceChildren();
+    if (placed.length) {
+      const [t1, t2] = res.bands;
+      [[`Up to ${fmtShort(t1)}`, 0], [`${fmtShort(t1)}–${fmtShort(t2)}`, 1], [`Over ${fmtShort(t2)}`, 2]].forEach(([t, i]) => leg.append(el('span', {}, el('i', { class: 'dot', style: `background:${res.cols[i]}` }), t)));
+    }
+    $('#mapNote').textContent = !GEO
+      ? 'House positions are still being prepared. They appear here once the address file has been built.'
+      : !list.length ? 'No sales match this search.'
+      : `${placed.length.toLocaleString('en-AU')} of ${list.length.toLocaleString('en-AU')} sales placed on the map${res.shown < placed.length ? ` (latest ${res.shown.toLocaleString('en-AU')} shown)` : ''}. Tap a dot for details.`;
+    setTimeout(() => {
+      mainMap.invalidateSize();
+      const key = JSON.stringify([v.id, v.area, v.locs, v.types, v.min, v.max, v.shape]);
+      if (key === lastFit) return;
+      lastFit = key;
+      if (sl) mainMap.fitBounds(sl.getBounds(), { padding: [16, 16] });
+      else if (placed.length) mainMap.fitBounds(L.latLngBounds(placed.map((s) => [s.lat, s.lon])), { padding: [16, 16], maxZoom: 16 });
+      else mainMap.setView(NR_CENTER, 9);
+    }, 0);
+  }
+
+  // drawing an area for a search
+  const mDlg = $('#mapDialog');
+  let drawMap = null, drawLayer = null, ctxLayer = null;
+  const draw = { mode: 'poly', pts: [], c: null, r: 1000 };
+  function openDrawMap() {
+    if (typeof L === 'undefined') return toast('The map could not load. Check your internet connection.');
+    if (!GEO) toast('House positions are not ready yet, so no sales can be placed inside an area.');
+    const sh = editing.shape;
+    draw.mode = sh && sh.type === 'circle' ? 'circle' : 'poly';
+    draw.pts = sh && sh.type === 'poly' ? sh.pts.map((p) => [...p]) : [];
+    draw.c = sh && sh.type === 'circle' ? [...sh.c] : null;
+    draw.r = sh && sh.type === 'circle' ? sh.r : 1000;
+    mDlg.showModal();
+    if (!drawMap) {
+      drawMap = makeMap($('#drawMap'));
+      drawMap.doubleClickZoom.disable(); // taps place corners, so quick taps must not zoom
+      ctxLayer = L.layerGroup().addTo(drawMap);
+      drawLayer = L.layerGroup().addTo(drawMap);
+      drawMap.on('click', (e) => {
+        const p = [+e.latlng.lat.toFixed(5), +e.latlng.lng.toFixed(5)];
+        if (draw.mode === 'poly') draw.pts.push(p); else draw.c = p;
+        redrawShape();
+      });
+    }
+    ctxLayer.clearLayers();
+    const context = SALES.filter(matcher({ ...editing, shape: null }));
+    addDots(ctxLayer, context, { small: true, faint: true });
+    setTimeout(() => {
+      drawMap.invalidateSize();
+      const sl = shapeLayer(sh);
+      const placed = context.filter((s) => s.lat != null);
+      if (sl) drawMap.fitBounds(sl.getBounds(), { padding: [30, 30] });
+      else if (placed.length) drawMap.fitBounds(L.latLngBounds(placed.map((s) => [s.lat, s.lon])), { padding: [20, 20], maxZoom: 15 });
+      else drawMap.setView(NR_CENTER, 9);
+    }, 0);
+    renderDrawTools();
+    redrawShape();
+  }
+  const currentDrawShape = () => draw.mode === 'poly' ? (draw.pts.length >= 3 ? { type: 'poly', pts: draw.pts } : null) : (draw.c ? { type: 'circle', c: draw.c, r: draw.r } : null);
+  function redrawShape() {
+    drawLayer.clearLayers();
+    const col = cssVar('--accent');
+    if (draw.mode === 'poly') {
+      if (draw.pts.length >= 3) L.polygon(draw.pts, { color: col, weight: 2.5, fillOpacity: 0.12 }).addTo(drawLayer);
+      else if (draw.pts.length === 2) L.polyline(draw.pts, { color: col, weight: 2.5 }).addTo(drawLayer);
+      draw.pts.forEach((p) => L.circleMarker(p, { radius: 6, color: col, weight: 2, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(drawLayer));
+    } else if (draw.c) {
+      L.circle(draw.c, { radius: draw.r, color: col, weight: 2.5, fillOpacity: 0.12, interactive: false }).addTo(drawLayer);
+      L.circleMarker(draw.c, { radius: 6, color: col, weight: 2, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(drawLayer);
+    }
+    const sh = currentDrawShape();
+    const n = sh ? salesFor({ ...editing, shape: sh }).length : null;
+    $('#drawHint').textContent = draw.mode === 'poly'
+      ? (draw.pts.length < 3 ? `Tap the map to place the corners of your area (${draw.pts.length} so far, at least 3).` : `${draw.pts.length} corners · ${n.toLocaleString('en-AU')} matching sales inside. Keep tapping to add corners.`)
+      : (draw.c ? `${n.toLocaleString('en-AU')} matching sales within ${fmtDist(draw.r)}. Tap elsewhere to move the pin.` : 'Tap the map to drop a pin.');
+    $('#drawUndo').disabled = draw.mode !== 'poly' || !draw.pts.length;
+  }
+  function renderDrawTools() {
+    const seg = $('#drawMode'); seg.replaceChildren();
+    for (const [k, label] of [['poly', 'Draw area'], ['circle', 'Distance from a pin']]) {
+      seg.append(el('button', { type: 'button', role: 'tab', 'aria-selected': String(draw.mode === k), onclick: () => { draw.mode = k; renderDrawTools(); redrawShape(); } }, label));
+    }
+    $('#radiusRow').hidden = draw.mode !== 'circle';
+    $('#radius').value = String(draw.r);
+    $('#radiusLabel').textContent = fmtDist(draw.r);
+  }
+  $('#radius').addEventListener('input', (e) => { draw.r = +e.target.value; $('#radiusLabel').textContent = fmtDist(draw.r); redrawShape(); });
+  $('#drawUndo').addEventListener('click', () => { draw.pts.pop(); redrawShape(); });
+  $('#drawClear').addEventListener('click', () => { draw.pts = []; draw.c = null; redrawShape(); });
+  $('#drawCancel').addEventListener('click', () => mDlg.close());
+  $('#drawDone').addEventListener('click', () => {
+    const sh = currentDrawShape();
+    if (draw.mode === 'poly' && draw.pts.length && draw.pts.length < 3) return toast('An area needs at least 3 corners.');
+    editing.shape = sh || null;
+    mDlg.close();
+    renderShapeField(); updateCount();
+  });
+  function renderShapeField() {
+    $('#fShapeLabel').textContent = editing.shape ? shapeLabel(editing.shape) : 'No map area (use the whole area and locations above)';
+    $('#fDraw').textContent = editing.shape ? 'Change on map' : 'Draw on map';
+    $('#fShapeClear').hidden = !editing.shape;
+  }
+  $('#fDraw').addEventListener('click', () => openDrawMap());
+  $('#fShapeClear').addEventListener('click', () => { editing.shape = null; renderShapeField(); updateCount(); });
+
   // ---------- filters dialog ----------
   const fDlg = $('#filterDialog');
   let editing = null, isNew = false;
 
   function openFilters(asNew) {
     isNew = asNew;
-    editing = asNew ? { id: '', name: '', area: 'all', locs: [], types: ['house'], min: 0, max: 0 } : structuredClone(currentView());
+    editing = asNew ? { id: '', name: '', area: 'all', locs: [], types: ['house'], min: 0, max: 0, shape: null } : structuredClone(currentView());
     $('#filterTitle').textContent = asNew ? 'New search' : `Edit “${editing.name}”`;
     $('#fName').value = editing.name;
     const areaSel = $('#fArea'); areaSel.replaceChildren(...AREAS.map((a) => el('option', { value: a.id }, a.name))); areaSel.value = editing.area;
@@ -646,7 +854,7 @@
       sel.replaceChildren(el('option', { value: 0 }, anyLabel), ...steps.map((p) => el('option', { value: p }, fmtShort(p))));
       sel.value = String(val || 0);
     }
-    renderTypeChecks(); renderLocChecks();
+    renderTypeChecks(); renderLocChecks(); renderShapeField();
     $('#deleteView').hidden = asNew || views.length <= 1;
     $('#saveAsNew').hidden = asNew;
     $('#filterError').hidden = true;
@@ -683,6 +891,11 @@
 
   function updateCount() {
     $('#fCount').textContent = SALES.length ? `${salesFor(editing).length.toLocaleString('en-AU')} matching sales` : '';
+    if (editing.shape && GEO) {
+      const all = SALES.filter(matcher({ ...editing, shape: null }));
+      const unplaced = all.filter((s) => s.lat == null).length;
+      $('#fShapeNote').textContent = unplaced ? `${unplaced.toLocaleString('en-AU')} of ${all.length.toLocaleString('en-AU')} sales in these locations couldn't be placed on the map (e.g. lot-only rural addresses), so they're left out.` : '';
+    } else $('#fShapeNote').textContent = '';
     $('#fLocLabel').textContent = editing.locs.length ? `Locations · ${editing.locs.length} selected` : 'Locations · all in area';
   }
 
@@ -889,7 +1102,7 @@
     entries = []; saveEntries(); menu.close(); render(); toast('Deleted');
   });
 
-  for (const d of document.querySelectorAll('dialog')) d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
+  for (const d of document.querySelectorAll('dialog:not(#mapDialog)')) d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
   let resizeT;
   window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(renderChart, 120); });
 

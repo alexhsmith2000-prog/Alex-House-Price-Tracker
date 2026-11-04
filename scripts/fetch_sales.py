@@ -215,12 +215,12 @@ def build_output(db):
             int(r["contract"]), loc_idx[lk], int(r["price"]),
             int(r["area_m2"]) if r["area_m2"] else None,
             intern("zone", r["zone"]), r["nature"][:1], intern("purpose", r["purpose"]),
-            1 if r["strata_lot"] else 0, intern("street", r["street"]),
+            1 if r["strata_lot"] else 0, intern("street", r["street"]), r["house"],
         ])
     return {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "NSW Valuer General bulk property sales information",
-        "fields": ["contract", "loc", "price", "area_m2", "zone", "nature", "purpose", "strata", "street"],
+        "fields": ["contract", "loc", "price", "area_m2", "zone", "nature", "purpose", "strata", "street", "house"],
         "localities": locs, "zones": dicts["zone"], "purposes": dicts["purpose"], "streets": dicts["street"],
         "sales": sales,
     }

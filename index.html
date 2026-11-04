@@ -13,6 +13,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -39,6 +40,12 @@
       <div id="chart" class="chart"></div>
       <div id="legend" class="legend"></div>
       <div class="panel-foot"><div class="seg small" id="smoothSeg" role="tablist" aria-label="Smoothing"></div></div>
+    </section>
+
+    <section class="panel" id="mapPanel" hidden>
+      <div class="panel-head"><h2>Map</h2><div class="legend" id="mapLegend"></div></div>
+      <div id="map" class="map"></div>
+      <p class="hint" id="mapNote"></p>
     </section>
 
     <section class="panel">
@@ -76,6 +83,14 @@
           <div class="field-head"><span>Property type</span></div>
           <div class="checkgrid" id="fTypes"></div>
         </div>
+        <div class="field">
+          <div class="field-head"><span>Map area (part of town)</span></div>
+          <div class="maparea">
+            <span id="fShapeLabel"></span>
+            <div class="actions"><button type="button" class="ghost small" id="fDraw">Draw on map</button><button type="button" class="link" id="fShapeClear" hidden>Remove</button></div>
+          </div>
+          <p class="hint" id="fShapeNote"></p>
+        </div>
         <div class="row2">
           <label>Min price <select id="fMin"></select></label>
           <label>Max price <select id="fMax"></select></label>
@@ -90,6 +105,26 @@
         <button type="submit" class="primary">Save</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- Full-screen map for drawing an area -->
+  <dialog id="mapDialog" class="fullmap">
+    <div id="drawMap" class="drawmap"></div>
+    <div class="map-tools">
+      <div class="seg" id="drawMode" role="tablist" aria-label="How to choose the area"></div>
+      <p class="hint" id="drawHint"></p>
+      <div class="radius-row" id="radiusRow" hidden>
+        <input type="range" id="radius" min="100" max="20000" step="100" aria-label="Distance">
+        <span id="radiusLabel"></span>
+      </div>
+      <div class="actions">
+        <button type="button" class="ghost" id="drawUndo">Undo</button>
+        <button type="button" class="ghost" id="drawClear">Clear</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="drawCancel">Cancel</button>
+        <button type="button" class="primary" id="drawDone">Use this area</button>
+      </div>
+    </div>
   </dialog>
 
   <!-- Listing (asking) price entry -->
@@ -216,6 +251,7 @@ Ballina,2026-09,989000,142,Domain</pre>
   </dialog>
 
   <div class="toast" id="toast" role="status" hidden></div>
+  <script src="vendor/leaflet/leaflet.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
