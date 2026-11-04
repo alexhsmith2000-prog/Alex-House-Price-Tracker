@@ -1,14 +1,17 @@
-name: Update sales data and deploy
+name: Build and deploy
 
 on:
-  # Daily schedule is switched off: the NSW Valuer General server currently refuses downloads
-  # from GitHub's servers (HTTP 403). Put these two lines back if that changes:
-  # schedule:
-  #   - cron: "17 19 * * *"   # daily, ~5:17am Sydney time
-  workflow_dispatch:
   push:
     branches: [main, claude/northern-rivers-housing-tracker-yj20s8]
     paths-ignore: ["README.md"]
+  schedule:
+    - cron: "41 17 3 2,5,8,11 *"   # quarterly, after each G-NAF release: refresh address locations
+  workflow_dispatch:
+    inputs:
+      rebuild_geo:
+        description: "Rebuild address locations from G-NAF"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -16,37 +19,44 @@ permissions:
   id-token: write
 
 concurrency:
-  group: update-and-deploy
+  group: build-and-deploy
   cancel-in-progress: false
 
 jobs:
-  update-data:
+  address-locations:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Decide whether to rebuild
+        id: need
+        run: |
+          if [ ! -f data/geo.json ] || [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.rebuild_geo }}" = "true" ] \
+             || git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^scripts/build_geo.py$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "Address locations are up to date."
+          fi
       - uses: actions/setup-python@v5
+        if: steps.need.outputs.run == 'true'
         with:
           python-version: "3.12"
-      - name: Fetch NSW Valuer General sales
-        id: fetch
-        continue-on-error: true   # still deploy the app if the source is unreachable
-        run: python scripts/fetch_sales.py
-      - name: Commit new data
-        if: steps.fetch.outcome == 'success'
+      - name: Build data/geo.json from G-NAF
+        if: steps.need.outputs.run == 'true'
+        run: python scripts/build_geo.py
+      - name: Commit
+        if: steps.need.outputs.run == 'true'
         run: |
-          if git diff --quiet -- data/sales_db.csv.gz && git ls-files --error-unmatch data/sales_db.csv.gz >/dev/null 2>&1; then
-            echo "No new sales data."
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data
-          git commit -m "Update sales data $(date -u +%F)"
-          git push
+          git add data/geo.json
+          git diff --cached --quiet && { echo "No change."; exit 0; }
+          git commit -m "Update address locations from G-NAF $(date -u +%F)"
+          git pull --rebase origin "${{ github.ref_name }}"
+          git push origin "HEAD:${{ github.ref_name }}"
 
   deploy:
-    needs: update-data
+    needs: address-locations
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -54,7 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}   # includes the data commit made above
+          ref: ${{ github.ref_name }}   # includes any data commit made above
       - uses: actions/configure-pages@v5
       - name: Remove files the app does not need
         run: rm -rf .github scripts data/sales_db.csv.gz
