@@ -241,7 +241,9 @@
     if (!old || !old.records || !Object.keys(old.records).length) return;
     const b = builder();
     for (const [key, r] of Object.entries(old.records)) b.put(key, r);
-    await b.save(old.files || [], old.updated);
+    // those files were read for the Northern Rivers only: list them as still to import so the rest of NSW gets added
+    await b.save([], old.updated);
+    try { localStorage.setItem('nr-prices.reimport', '1'); } catch { /* ignore */ }
   }
 
   // Import helper: grows columns as plain arrays, then saves them as typed arrays.
@@ -554,7 +556,10 @@
     const weeks = FILES.files.filter((f) => f.startsWith('weekly/')).sort();
     const years = FILES.files.filter((f) => f.startsWith('yearly/')).map((f) => f.slice(7));
     const missing = missingFiles();
-    box.textContent = n
+    let reimport = false; try { reimport = localStorage.getItem('nr-prices.reimport') === '1' && !FILES.files.length; } catch { /* ignore */ }
+    box.textContent = reimport
+      ? `${n.toLocaleString('en-AU')} Northern Rivers sales kept from before. The app now keeps all of NSW: import your sales files again (they're probably still in the NR Prices folder) to add the rest of the state. Nothing will be doubled up.`
+      : n
       ? `${n.toLocaleString('en-AU')} sales imported on this phone${years.length ? ` · years ${years.join(', ')}` : ''}${weeks.length ? ` · latest week ${fmtDate(weeks[weeks.length - 1].slice(7))}` : ''}. ${missing.length ? `${missing.length} file${missing.length === 1 ? '' : 's'} still to download.` : 'Up to date.'}`
       : `No sales imported yet. ${missing.length} files to download to build your history (see the steps below).`;
     const latest = missing.filter((u) => u.includes('/weekly/')).pop();
