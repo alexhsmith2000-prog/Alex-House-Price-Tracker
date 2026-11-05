@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '8'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '9'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -139,7 +139,7 @@
   }
 
   let toastTimer;
-  function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2800); }
+  function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, msg.length > 80 ? 9000 : 2800); }
 
   // ---------- sales data ----------
   // Sales are kept as columns (typed arrays): half a million NSW sales take ~30 MB this way, and
@@ -531,8 +531,17 @@
         ok++;
       } catch (e) { bad.push(f.name); console.warn(f.name, e); }
     }
+    if (!ok) {
+      const msg = `None of the ${files.length} selected file${files.length === 1 ? ' was a sales file' : 's were sales files'} (${bad.slice(0, 3).join(', ')}${bad.length > 3 ? ', …' : ''}). Open one in the Files app: a real one is a .zip of about 1–3 MB (weekly) or much larger (yearly).`;
+      try { localStorage.setItem('nr-prices.lastImport', `${new Date().toLocaleString('en-AU')}: ${msg}`); } catch { /* ignore */ }
+      toast(msg); renderImportStatus(); return;
+    }
     toast('Saving…');
-    try { await b.save([...done].sort(), new Date().toISOString()); } catch (e) { console.warn(e); toast('Could not save the imported sales on this phone (storage full?).'); return; }
+    try { await b.save([...done].sort(), new Date().toISOString()); } catch (e) {
+      const msg = `Read ${ok} file${ok === 1 ? '' : 's'} (${read.toLocaleString('en-AU')} NSW sales) but could not save them on this phone: ${(e && (e.name || '') + ' ' + (e.message || '')).trim() || e}`;
+      try { localStorage.setItem('nr-prices.lastImport', `${new Date().toLocaleString('en-AU')}: ${msg}`); } catch { /* ignore */ }
+      toast(msg); renderImportStatus(); return;
+    }
     derive(); render(); renderImportStatus();
     const msg = `Imported ${ok} file${ok === 1 ? '' : 's'}: ${read.toLocaleString('en-AU')} NSW sales read, ${b.added.toLocaleString('en-AU')} new${bad.length ? ` · ${bad.length} skipped (${bad.slice(0, 3).join(', ')}${bad.length > 3 ? ', …' : ''}: not a sales file)` : ''}`;
     try { localStorage.setItem('nr-prices.lastImport', `${new Date().toLocaleString('en-AU')}: ${msg}`); } catch { /* ignore */ }
