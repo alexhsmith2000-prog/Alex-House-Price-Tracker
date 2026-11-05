@@ -78,7 +78,7 @@ be over its floor.
 ## Trend lines
 
 Charts can show straight-line trends (fitted to the log of the median, so the slope reads as % per year) over
-the last 1, 3 and 5 years, leaving out the incomplete recent months. In Compare, each search gets one trend
+the last 3 and 6 months and 1, 3 and 5 years (each switched on or off under the chart), leaving out the incomplete recent months. In Compare, each search gets one trend
 over the range shown.
 
 ## Put it on your phone

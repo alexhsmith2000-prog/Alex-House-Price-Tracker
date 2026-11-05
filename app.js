@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '16'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '17'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -742,12 +742,26 @@
     for (const r of RANGES) rs.append(el('button', { role: 'tab', 'aria-selected': String(prefs.range === r.key), onclick: () => { prefs.range = r.key; savePrefs(); render(); } }, r.label));
     const sm = $('#smoothSeg'); sm.replaceChildren();
     for (const [k, label] of [[1, 'Monthly'], [3, '3-month rolling']]) sm.append(el('button', { role: 'tab', 'aria-selected': String(prefs.smooth === k), onclick: () => { prefs.smooth = k; savePrefs(); render(); } }, label));
-    const tr = $('#trendSeg'); tr.replaceChildren();
-    for (const [k, label] of [[true, 'Trend lines'], [false, 'Off']]) tr.append(el('button', { role: 'tab', 'aria-selected': String(prefs.trend === k), onclick: () => { prefs.trend = k; savePrefs(); renderChart(); renderSegs(); } }, label));
+    const tr = $('#trendSeg'); tr.replaceChildren(el('span', { class: 'seg-label' }, 'Trends'));
+    for (const w of TREND_WINDOWS) {
+      const on = prefs.trends.includes(w.key);
+      tr.append(el('button', { type: 'button', 'aria-pressed': String(on), 'aria-selected': String(on), title: `Trend over the last ${w.label}`, onclick: () => {
+        prefs.trends = on ? prefs.trends.filter((k) => k !== w.key) : [...prefs.trends, w.key];
+        savePrefs(); renderChart(); renderSegs();
+      } }, w.short));
+    }
   }
 
   // ---------- trend lines: straight-line fit of log(price) over a period, as % a year ----------
-  const TREND_WINDOWS = [{ months: 12, label: '1 yr', color: 'var(--s5)', dash: '2 4' }, { months: 36, label: '3 yrs', color: 'var(--s7)', dash: '7 4' }, { months: 60, label: '5 yrs', color: 'var(--s8)', dash: '12 5' }];
+  const TREND_WINDOWS = [
+    { months: 3, key: '3', short: '3M', label: '3 mths', color: 'var(--s6)', dash: '1 3' },
+    { months: 6, key: '6', short: '6M', label: '6 mths', color: 'var(--s3)', dash: '4 3' },
+    { months: 12, key: '12', short: '1Y', label: '1 yr', color: 'var(--s5)', dash: '2 4' },
+    { months: 36, key: '36', short: '3Y', label: '3 yrs', color: 'var(--s7)', dash: '7 4' },
+    { months: 60, key: '60', short: '5Y', label: '5 yrs', color: 'var(--s8)', dash: '12 5' },
+  ];
+  if (!Array.isArray(prefs.trends)) prefs.trends = prefs.trend === false ? [] : ['12', '36', '60'];
+  const trendsOn = () => prefs.trends.length > 0;
   // points: [{ month, v }]; returns { a, b, from, to, yearly, n } or null. Leaves out incomplete recent months.
   function fitTrend(points, fromMonth, toMonth, minPts) {
     const pts = points.filter((p) => p.month >= fromMonth && p.month <= toMonth && !isProvisional(p.month) && p.v > 0);
@@ -763,7 +777,7 @@
   const trendAt = (f, m) => Math.exp(f.a + f.b * monthDiff(f.t0, m));
   // Which trends to draw for the current chart
   function buildTrends(series) {
-    if (!prefs.trend) return [];
+    if (!trendsOn()) return [];
     const out = [];
     if (prefs.view === COMPARE) {
       for (const s of series) {
@@ -779,9 +793,10 @@
     if (!complete.length) return out;
     const last = complete[complete.length - 1].month;
     for (const w of TREND_WINDOWS) {
+      if (!prefs.trends.includes(w.key)) continue;
       const from = addMonths(last, -(w.months - 1));
       if (complete[0].month > addMonths(from, Math.round(w.months * 0.25))) continue; // not enough history for this period
-      const f = fitTrend(base.allPoints, from, last, Math.max(6, Math.round(w.months * 0.5)));
+      const f = fitTrend(base.allPoints, from, last, w.months <= 6 ? Math.max(3, w.months - 2) : Math.max(6, Math.round(w.months * 0.5)));
       if (f) out.push({ ...f, color: w.color, dash: w.dash, label: w.label, base: base.name });
     }
     return out;
@@ -939,9 +954,10 @@
     if (showProv) legend.append(el('span', {}, el('i', { class: 'band' }), 'Recent months, sales still being reported'));
     for (const t of trends) legend.append(el('span', {}, el('i', { class: 'dash', style: `color:${t.color}` }), `Trend ${t.label}: `, el('b', { class: t.yearly >= 0 ? 'up' : 'down' }, `${t.yearly >= 0 ? '+' : '−'}${Math.abs(t.yearly * 100).toFixed(1)}%/yr`)));
     const note = $('#trendNote');
+    const short = trends.some((t) => t.label === '3 mths' || t.label === '6 mths');
     note.textContent = trends.length && prefs.view !== COMPARE
-      ? `Trend lines are a straight-line fit to the ${trends[0].base.toLowerCase()} over each period, shown as growth per year. Incomplete recent months are left out.`
-      : prefs.trend && prefs.view !== COMPARE && N ? 'Not enough months of sales for a trend line. Try a wider search or the 3-month rolling view.' : '';
+      ? `Trend lines are a straight-line fit to the ${trends[0].base.toLowerCase()} over each period, shown as growth per year. Incomplete recent months are left out.${short ? ' 3- and 6-month trends rest on only a few months of sales, so they swing a lot: treat them as an early signal, not a forecast.' : ''}`
+      : trendsOn() && prefs.view !== COMPARE && N ? 'Not enough months of sales for the trend periods you picked. Try a wider search, a longer period or the 3-month rolling view.' : '';
   }
 
   let tableAll = false;

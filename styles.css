@@ -295,3 +295,5 @@ a.lookup { display: inline-block; margin-top: 4px; font-size: .82rem; color: var
 #trendNote { margin-top: 6px; }
 .legend b.up { color: var(--up); } .legend b.down { color: var(--down); }
 .floodrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+#trendSeg .seg-label { align-self: center; padding: 0 6px 0 8px; font-size: .78rem; color: var(--muted); }
+#trendSeg button[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
