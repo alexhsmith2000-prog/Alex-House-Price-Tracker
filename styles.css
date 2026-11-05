@@ -281,3 +281,8 @@ button.primary.small { padding: 8px 14px; font-size: .88rem; background: var(--a
 
 /* ---- v11: look-up links ---- */
 a.lookup { display: inline-block; margin-top: 4px; font-size: .82rem; color: var(--accent); text-decoration: none; font-weight: 600; }
+
+/* ---- v14: flood levels ---- */
+.flood { font-size: .8rem; font-weight: 600; margin-top: 2px; }
+.flood.wet { color: var(--down); }
+.flood.dry { color: var(--up); }

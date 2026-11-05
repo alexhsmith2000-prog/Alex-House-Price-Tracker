@@ -112,6 +112,9 @@
           <label>Min land size <select id="fLandMin"></select></label>
           <label>Max land size <select id="fLandMax"></select></label>
         </div>
+        <label id="fFloodField" hidden>Flood (council floor levels)
+          <select id="fFlood"></select>
+        </label>
         <label>Street (optional)
           <input type="search" id="fStreet" placeholder="e.g. Centre St" autocomplete="off">
         </label>
@@ -230,6 +233,14 @@
         </div>
       </details>
       <button class="ghost danger block" id="clearImported">Delete imported sales</button>
+      <hr>
+      <h2>Flood levels</h2>
+      <p class="hint" id="floodStatus"></p>
+      <label class="ghost block file">Import council flood &amp; floor levels (PDF)
+        <input type="file" id="importFlood" accept=".pdf,application/pdf" multiple>
+      </label>
+      <p class="hint">Each listed home's floor level is compared with the 1-in-100-year flood level at that spot. Floor levels were recorded from 1996 and may be out of date (homes raised, rebuilt or bought back since). The council notes levels can differ from the gauge by 0.6 m or more.</p>
+      <button class="ghost danger block" id="clearFlood">Delete flood levels</button>
       <hr>
       <h2>Your searches and listing prices</h2>
       <p class="hint">Stored on this phone only, so export a backup now and then.</p>

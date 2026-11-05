@@ -63,6 +63,14 @@ house. Larger areas also count whole suburbs whose centre falls inside.
 
 Map images © OpenStreetMap contributors. The map library (Leaflet) is bundled in `vendor/`.
 
+## Flood levels (Lismore)
+
+Lismore City Council publishes "Flood & Floor Levels" PDFs: for each listed address, the floor level and the
+1-in-100-year flood level (metres AHD). In the app, **⋯ → Import council flood & floor levels (PDF)** reads the
+table on the phone (pdf.js, bundled in `vendor/pdfjs/`) and keeps it on the phone only; nothing is published.
+Sales at a listed address then show "Floor X m above/below the 1-in-100 flood level", and searches get a
+**Flood** filter. Floor levels date from 1996 onwards and may be out of date.
+
 ## Put it on your phone
 
 1. In the GitHub repo go to **Settings → Pages** and set **Source** to **GitHub Actions**.

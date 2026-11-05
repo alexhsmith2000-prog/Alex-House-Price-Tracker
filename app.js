@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '13'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '14'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -236,6 +236,7 @@
       const c = LOC_COUNTS.get(name) || { pc: locPc[li], n: 0 }; c.n += locCount[li]; LOC_COUNTS.set(name, c);
     });
     placeAll();
+    matchFlood();
     DATA_INFO = N ? { generated: FILES.updated, latest, excluded, needsReimport: N > 0 && !(C.interest && C.interest.length === N && C.interest.some((x) => x)) } : null;
     DATA_VER++; salesCache.clear(); streetMatchCache.clear(); RESALE = null;
   }
@@ -244,6 +245,7 @@
     const [stored, geoRes, subRes] = await Promise.all([idbGet('store2'), fetch('data/geo.json').catch(() => null), fetch('data/suburbs.json').catch(() => null)]);
     C = stored && stored.v === 2 ? stored : emptyStore();
     FILES = (await idbGet('store2-files')) || { files: [], updated: null };
+    FLOOD = (await idbGet('flood-levels')) || null;
     try { if (geoRes && geoRes.ok) loadGeo(await geoRes.json()); } catch { /* house positions unavailable */ }
     try { if (subRes && subRes.ok) loadSuburbs(await subRes.json()); } catch { /* suburb positions unavailable */ }
     if (!stored) await migrateOldStore();
@@ -335,7 +337,7 @@
   const salesCache = new Map();
   function salesFor(v) {
     if (!N) return [];
-    const key = JSON.stringify([v.area, v.locs, v.types, v.min, v.max, v.shape, v.landMin, v.landMax, v.street]);
+    const key = JSON.stringify([v.area, v.locs, v.types, v.min, v.max, v.shape, v.landMin, v.landMax, v.street, v.flood]);
     const hit = salesCache.get(key);
     if (hit) return hit; // shared, newest first: callers must not modify it
     const area = areaOf(v.area);
@@ -355,6 +357,11 @@
       if (p < min || p > max) continue;
       if (landOn) { const a = C.area[i]; if (!(a >= landMin && a <= landMax)) continue; } // no land size recorded → left out
       if (streetOk && !streetOk[C.street[i]]) continue;
+      if (v.flood) {
+        const fd = DER.flood[i];
+        if (v.flood === 'unknown' ? !Number.isNaN(fd) || !DER.floodLoc[C.loc[i]] : Number.isNaN(fd)) continue;
+        if ((v.flood === 'above' && fd < 0) || (v.flood === 'below' && fd >= 0) || (v.flood === 'below1' && fd >= -1)) continue;
+      }
       if (shape) {
         const lvl = DER.level[i];
         if (!lvl || (fine && lvl === 1 && DER.houseRegion[C.loc[i]])) continue;
@@ -708,6 +715,7 @@
     let price = v.min && v.max ? `${fmtShort(v.min)}–${fmtShort(v.max)}` : v.min ? `${fmtShort(v.min)}+` : v.max ? `Up to ${fmtShort(v.max)}` : 'Any price';
     if (v.landMin || v.landMax) price += ` · land ${v.landMin && v.landMax ? `${fmtArea(v.landMin)}–${fmtArea(v.landMax)}` : v.landMin ? `${fmtArea(v.landMin)}+` : `up to ${fmtArea(v.landMax)}`}`;
     if (v.street) where = `Street “${titleCase(v.street)}” · ${where}`;
+    if (v.flood) price += ` · ${FLOOD_FILTERS.find((f) => f.id === v.flood)?.short || ''}`;
     return { where, types, price };
   }
 
@@ -923,6 +931,125 @@
     $('#tableNote').textContent = months.length ? '* Sales for this month are still being reported. Tap a month to add your listing (asking) price.' : '';
   }
 
+  // ---------- flood: council floor and flood levels (imported on the phone only) ----------
+  // FLOOD = { files: [{ name, n, imported }], recs: { 'LISMORE|BALLINA RD|16': [floor, flood1in100] } }  (metres AHD)
+  let FLOOD = null;
+  const FLOOD_FILTERS = [
+    { id: '', name: 'Any', short: '' },
+    { id: 'above', name: 'Floor above the 1-in-100 flood level', short: 'floor above 1-in-100 flood' },
+    { id: 'below', name: 'Floor below the 1-in-100 flood level', short: 'floor below 1-in-100 flood' },
+    { id: 'below1', name: 'Floor more than 1 m below it', short: 'floor >1 m below 1-in-100 flood' },
+    { id: 'unknown', name: 'Not in the council list (same suburbs)', short: 'not in council flood list' },
+  ];
+  const houseKey = (h) => String(h || '').toUpperCase().replace(/\s+/g, '');
+  const leadNum = (h) => (String(h || '').match(/\d+/) || [''])[0];
+  function matchFlood() {
+    DER.flood = new Float32Array(N).fill(NaN);
+    DER.floodLoc = new Uint8Array(DER.locName.length);
+    if (!FLOOD || !FLOOD.recs) return;
+    const locs = new Set(Object.keys(FLOOD.recs).map((k) => k.split('|')[0]));
+    DER.locName.forEach((n, li) => { if (locs.has(n)) DER.floodLoc[li] = 1; });
+    const streetNorm = new Map();
+    for (let i = 0; i < N; i++) {
+      if (!DER.keep[i] || !DER.floodLoc[C.loc[i]]) continue;
+      const si = C.street[i];
+      let st = streetNorm.get(si);
+      if (st === undefined) { st = normStreet(C.dict.street[si] || ''); streetNorm.set(si, st); }
+      const h = C.dict.house[C.house[i]] || '';
+      const base = `${DER.locName[C.loc[i]]}|${st}|`;
+      const r = FLOOD.recs[base + houseKey(h)] || FLOOD.recs[base + leadNum(h)];
+      if (r) DER.flood[i] = r[0] - r[1];
+    }
+  }
+  function floodText(i) {
+    const fd = DER && DER.flood ? DER.flood[i] : NaN;
+    if (Number.isNaN(fd)) return '';
+    const m = Math.abs(fd).toFixed(1);
+    return fd >= 0 ? `Floor ${m} m above the 1-in-100 flood level` : `Floor ${m} m below the 1-in-100 flood level`;
+  }
+  const floodEl = (i) => { const t = floodText(i); return t ? el('div', { class: `flood ${DER.flood[i] >= 0 ? 'dry' : 'wet'}` }, t) : null; };
+
+  // Read the council's "Flood & Floor Levels" PDF tables with pdf.js (loaded only when needed).
+  let pdfjsReady = null;
+  const loadPdfjs = () => pdfjsReady || (pdfjsReady = new Promise((res, rej) => {
+    const sc = document.createElement('script');
+    sc.src = 'vendor/pdfjs/pdf.min.js';
+    sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js'; res(window.pdfjsLib); };
+    sc.onerror = () => { pdfjsReady = null; rej(new Error('could not load the PDF reader')); };
+    document.head.append(sc);
+  }));
+  async function pdfLines(file) {
+    const pdfjsLib = await loadPdfjs();
+    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const lines = [];
+    for (let pn = 1; pn <= doc.numPages; pn++) {
+      const tc = await (await doc.getPage(pn)).getTextContent();
+      const rows = [];
+      for (const it of tc.items) {
+        if (!it.str || !it.str.trim()) continue;
+        const x = it.transform[4], y = it.transform[5];
+        let row = rows.find((r) => Math.abs(r.y - y) < 3);
+        if (!row) rows.push((row = { y, items: [] }));
+        row.items.push({ x, s: it.str.trim() });
+      }
+      rows.sort((a, b) => b.y - a.y);
+      for (const r of rows) lines.push(r.items.sort((a, b) => a.x - b.x).map((t) => t.s).join(' '));
+    }
+    return lines;
+  }
+  const STREET_TYPE_WORDS = new Set(['STREET', 'ST', 'ROAD', 'RD', 'AVENUE', 'AVE', 'LANE', 'LN', 'PLACE', 'PL', 'CRESCENT', 'CRES', 'DRIVE', 'DR', 'COURT', 'CT',
+    'CLOSE', 'CL', 'PARADE', 'PDE', 'TERRACE', 'TCE', 'HIGHWAY', 'HWY', 'WAY', 'CIRCUIT', 'CCT', 'GROVE', 'ESPLANADE', 'BOULEVARD', 'SQUARE', 'ARCADE', 'MALL', 'RISE', 'VIEW']);
+  // e.g. "16 Ballina Road Lismore 8.723 8.397 8.858 Ampol Service Station 12.3"
+  function parseFloodLine(line) {
+    const m = line.match(/^(\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?)\s+(.+)$/);
+    if (!m) return null;
+    const toks = m[2].split(/\s+/);
+    const firstNum = toks.findIndex((t) => /^\d+(\.\d+)?$/.test(t));
+    if (firstNum < 2) return null;
+    const words = toks.slice(0, firstNum);
+    let k = -1;
+    words.forEach((w, j) => { if (STREET_TYPE_WORDS.has(w.toUpperCase())) k = j; });
+    if (k < 1 || k === words.length - 1) return null; // need a street name, a street type and a suburb
+    const nums = toks.filter((t) => /^\d+(\.\d+)?$/.test(t)).map(Number);
+    const floor = Number(toks[firstNum]), flood = nums[nums.length - 1];
+    if (!(floor > 0 && floor < 60 && flood > 0 && flood < 60) || nums.length < 2) return null;
+    return { num: houseKey(m[1].split(/[-/]/)[0]), street: normStreet(words.slice(0, k + 1).join(' ')), suburb: words.slice(k + 1).join(' ').replace(/\(.*?\)|\(.*$/g, ' ').replace(/[^A-Za-z ]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase(), floor, flood };
+  }
+  async function importFloodPdfs(fileList) {
+    const files = [...fileList];
+    if (!files.length) return;
+    const data = FLOOD ? structuredClone(FLOOD) : { files: [], recs: {} };
+    const report = [];
+    for (const f of files) {
+      toast(`Reading ${f.name}…`);
+      try {
+        let n = 0;
+        for (const line of await pdfLines(f)) {
+          const r = parseFloodLine(line);
+          if (!r) continue;
+          const key = `${r.suburb}|${r.street}|${r.num}`;
+          const old = data.recs[key];
+          if (!old || r.floor < old[0]) data.recs[key] = [r.floor, r.flood]; // several floors at one address: keep the lowest
+          n++;
+        }
+        data.files = data.files.filter((x) => x.name !== f.name).concat({ name: f.name, n, imported: new Date().toISOString() });
+        report.push(n ? `${f.name}: ${n} floor levels` : `${f.name}: no floor-level table found`);
+      } catch (e) { report.push(`${f.name}: ${e.message || e}`); }
+    }
+    FLOOD = data;
+    try { await idbSet('flood-levels', FLOOD); } catch { toast('Could not save the flood levels on this phone.'); return; }
+    derive(); render(); renderFloodStatus();
+    toast(report.join(' · '));
+  }
+  function renderFloodStatus() {
+    const box = $('#floodStatus'); if (!box) return;
+    if (!FLOOD || !Object.keys(FLOOD.recs).length) { box.textContent = 'No flood levels imported yet. Import the council’s “Flood & Floor Levels” PDF for a suburb (Lismore City Council publishes one per suburb).'; return; }
+    const addrs = Object.keys(FLOOD.recs).length;
+    let matched = 0; if (DER && DER.flood) for (let i = 0; i < N; i++) if (!Number.isNaN(DER.flood[i])) matched++;
+    const subs = [...new Set(Object.keys(FLOOD.recs).map((k) => titleCase(k.split('|')[0])))].join(', ');
+    box.textContent = `${addrs.toLocaleString('en-AU')} addresses with floor levels (${subs}) from ${FLOOD.files.map((f) => f.name).join(', ')}. ${matched.toLocaleString('en-AU')} of your sales match one. Kept on this phone only.`;
+  }
+
   // ---------- resales: the same property sold twice ----------
   // For each sale, the previous sale of the same property (or -1). Built once, when first needed.
   let RESALE = null;
@@ -988,6 +1115,7 @@
           el('span', { class: r.total >= 0 ? 'up' : 'down' }, `${fmtPct(r.total)} · ${fmtPct(r.yearly)}/yr`)),
         el('div', { class: 'sline' }, `${s.street ? (s.house ? s.house + ' ' : '') + titleCase(s.street) + ', ' : ''}${titleCase(s.loc)}`),
         el('div', { class: 'smeta' }, `${fmtDate(r.prevD)} → ${fmtDate(s.d)} (${r.years.toFixed(1)} years) · ${typeName(s.type)}${s.area ? ' · ' + fmtArea(s.area) : ''}`),
+        floodEl(s.i),
         s.street ? el('a', { class: 'lookup', href: lookupUrl(s), target: '_blank', rel: 'noopener' }, 'Look up on property.com.au ↗') : null));
     }
     const more = $('#moreResales');
@@ -1009,6 +1137,7 @@
         el('div', { class: 'srow' }, el('b', {}, fmtMoney(s.price)), el('span', { class: 'sdate' }, fmtDate(s.d))),
         el('div', { class: 'sline' }, `${s.street ? (s.house ? s.house + ' ' : '') + titleCase(s.street) + ', ' : ''}${titleCase(s.loc)}`),
         el('div', { class: 'smeta' }, [typeName(s.type), fmtArea(s.area), s.zone ? `zone ${s.zone}` : ''].filter(Boolean).join(' · ')),
+        floodEl(s.i),
         s.street ? el('a', { class: 'lookup', href: lookupUrl(s), target: '_blank', rel: 'noopener' }, 'Look up on property.com.au ↗') : null));
     }
     if (!list.length) box.append(el('li', { class: 'table-empty' }, 'No sales match these filters.'));
@@ -1066,7 +1195,7 @@
     for (const s of shown) {
       const c = s.price <= t1 ? cols[0] : s.price <= t2 ? cols[1] : cols[2];
       const mk = L.circleMarker([s.lat, s.lon], { radius: opts.small ? 4 : 5.5, weight: 1, color: '#ffffff', fillColor: c, fillOpacity: opts.faint ? 0.45 : 0.9, interactive: !opts.faint });
-      if (!opts.faint) mk.bindPopup(() => `<b>${fmtMoney(s.price)}</b> · ${fmtDate(s.d)}<br>${esc(s.house ? s.house + ' ' : '')}${esc(titleCase(s.street))}, ${esc(titleCase(s.loc))}<br><span style="opacity:.7">${esc(typeName(s.type))}${s.area ? ' · ' + fmtArea(s.area) : ''}${s.approx ? ' · position approximate' : ''}</span>${s.street ? `<br><a href="${esc(lookupUrl(s))}" target="_blank" rel="noopener">Look up on property.com.au ↗</a>` : ''}`);
+      if (!opts.faint) mk.bindPopup(() => `<b>${fmtMoney(s.price)}</b> · ${fmtDate(s.d)}<br>${esc(s.house ? s.house + ' ' : '')}${esc(titleCase(s.street))}, ${esc(titleCase(s.loc))}<br><span style="opacity:.7">${esc(typeName(s.type))}${s.area ? ' · ' + fmtArea(s.area) : ''}${s.approx ? ' · position approximate' : ''}</span>${floodText(s.i) ? `<br>${esc(floodText(s.i))}` : ''}${s.street ? `<br><a href="${esc(lookupUrl(s))}" target="_blank" rel="noopener">Look up on property.com.au ↗</a>` : ''}`);
       mk.addTo(layer);
     }
     return { shown: shown.length, suburbs: subs.size, bands: [t1, t2], cols };
@@ -1102,7 +1231,7 @@
       : `${list.length.toLocaleString('en-AU')} sales: ${res.shown.toLocaleString('en-AU')} shown at their house${res.shown < houseN ? ' (latest only)' : ''}${res.suburbs ? `, the rest grouped into ${res.suburbs.toLocaleString('en-AU')} suburb bubble${res.suburbs === 1 ? '' : 's'}` : ''}${placed.length < list.length ? ` · ${(list.length - placed.length).toLocaleString('en-AU')} couldn't be placed` : ''}. Tap a dot for details.`;
     setTimeout(() => {
       mainMap.invalidateSize();
-      const key = JSON.stringify([v.id, v.area, v.locs, v.types, v.min, v.max, v.shape, v.landMin, v.landMax, v.street]);
+      const key = JSON.stringify([v.id, v.area, v.locs, v.types, v.min, v.max, v.shape, v.landMin, v.landMax, v.street, v.flood]);
       if (key === lastFit) return;
       lastFit = key;
       if (sl) mainMap.fitBounds(sl.getBounds(), { padding: [16, 16] });
@@ -1214,6 +1343,10 @@
       sel.value = String(val || 0);
     }
     $('#fStreet').value = editing.street || '';
+    const fsel = $('#fFlood');
+    fsel.replaceChildren(...FLOOD_FILTERS.map((f) => el('option', { value: f.id }, f.name)));
+    fsel.value = editing.flood || '';
+    $('#fFloodField').hidden = !FLOOD && !editing.flood;
     for (const [id, anyLabel, val] of [['#fMin', 'No min', editing.min], ['#fMax', 'No max', editing.max]]) {
       const sel = $(id);
       const steps = val && !PRICE_STEPS.includes(val) ? [...PRICE_STEPS, val].sort((a, b) => a - b) : PRICE_STEPS;
@@ -1287,6 +1420,7 @@
   $('#fMin').addEventListener('change', (e) => { editing.min = +e.target.value; updateCount(); });
   $('#fLandMin').addEventListener('change', (e) => { editing.landMin = +e.target.value; updateCount(); });
   $('#fLandMax').addEventListener('change', (e) => { editing.landMax = +e.target.value; updateCount(); });
+  $('#fFlood').addEventListener('change', (e) => { editing.flood = e.target.value; updateCount(); });
   let streetT;
   $('#fStreet').addEventListener('input', (e) => { clearTimeout(streetT); streetT = setTimeout(() => { editing.street = e.target.value.trim(); updateCount(); }, 250); });
   $('#fMax').addEventListener('change', (e) => { editing.max = +e.target.value; updateCount(); });
@@ -1299,6 +1433,7 @@
     if (editing.min && editing.max && editing.min > editing.max) return err('The minimum price is above the maximum.');
     if (editing.landMin && editing.landMax && editing.landMin > editing.landMax) return err('The minimum land size is above the maximum.');
     editing.street = $('#fStreet').value.trim();
+    editing.flood = $('#fFlood').value;
     if (views.some((v) => v.name.toLowerCase() === name.toLowerCase() && (asNew || v.id !== editing.id))) return err('You already have a search with that name.');
     const rec = { ...editing, name };
     if (asNew) { rec.id = 'v-' + Date.now().toString(36); views.push(rec); }
@@ -1368,7 +1503,14 @@
 
   // ---------- menu: import / export ----------
   const menu = $('#menuDialog');
-  $('#menuBtn').addEventListener('click', () => { renderImportStatus(); menu.showModal(); });
+  $('#menuBtn').addEventListener('click', () => { renderImportStatus(); renderFloodStatus(); menu.showModal(); });
+  $('#importFlood').addEventListener('change', async (ev) => { const files = ev.target.files; await importFloodPdfs(files); ev.target.value = ''; });
+  $('#clearFlood').addEventListener('click', async () => {
+    if (!FLOOD) return toast('No flood levels to delete');
+    if (!confirm('Delete the imported flood and floor levels?')) return;
+    FLOOD = null; try { await idbSet('flood-levels', null); } catch { /* ignore */ }
+    derive(); render(); renderFloodStatus();
+  });
   $('#importZip').addEventListener('change', async (ev) => { const files = ev.target.files; await importZipFiles(files); ev.target.value = ''; });
   $('#copyList').addEventListener('click', async () => {
     const list = missingFiles();
