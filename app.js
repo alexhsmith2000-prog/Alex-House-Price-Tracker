@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '12'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '13'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -879,6 +879,13 @@
     if (showProv) legend.append(el('span', {}, el('i', { class: 'band' }), 'Recent months, sales still being reported'));
   }
 
+  let tableAll = false;
+  function tableToggle(total) {
+    const btn = $('#tableMore');
+    btn.hidden = total <= 12;
+    btn.textContent = tableAll ? 'Show the last 12 months only' : `Show all ${total} months`;
+    btn.onclick = () => { tableAll = !tableAll; renderTable(); };
+  }
   function renderTable() {
     const t = $('#table'); t.replaceChildren();
     const td = (v) => el('td', { class: v == null ? 'na' : '' }, fmtShort(v));
@@ -890,8 +897,9 @@
       const months = [...new Set(data.flatMap((m) => [...m.keys()]))].sort().reverse();
       t.append(el('thead', {}, el('tr', {}, el('th', {}, 'Month'), ...views.map((v) => el('th', {}, v.name)))));
       const tb = el('tbody');
-      for (const mo of months) tb.append(el('tr', {}, el('td', {}, fmtMonthShort(mo)), ...data.map((m) => { const r = m.get(mo); return td(r && r.pooled >= MIN_SALES ? r[key] : null); })));
+      for (const mo of months.slice(0, tableAll ? undefined : 12)) tb.append(el('tr', {}, el('td', {}, fmtMonthShort(mo)), ...data.map((m) => { const r = m.get(mo); return td(r && r.pooled >= MIN_SALES ? r[key] : null); })));
       if (!months.length) tb.append(el('tr', {}, el('td', { colspan: views.length + 1, class: 'table-empty' }, 'No sales yet.')));
+      tableToggle(months.length);
       t.append(tb);
       $('#tableNote').textContent = '';
       return;
@@ -903,13 +911,14 @@
     const months = [...new Set([...rows.keys(), ...lst.keys()])].sort().reverse();
     t.append(el('thead', {}, el('tr', {}, el('th', {}, 'Month'), el('th', {}, 'Sales'), el('th', {}, 'Median'), el('th', {}, 'Average'), el('th', {}, 'Listing'))));
     const tb = el('tbody');
-    for (const m of months) {
+    for (const m of months.slice(0, tableAll ? undefined : 12)) {
       const r = rows.get(m), e = lst.get(m);
       tb.append(el('tr', { onclick: () => openEntry({ suburb: v.name, month: m }) },
         el('td', {}, fmtMonthShort(m), isProvisional(m) ? '*' : ''), el('td', {}, r ? r.n : 0),
         td(r ? r.median : null), td(r ? r.avg : null), td(e ? e.avgListing : null)));
     }
     if (!months.length) tb.append(el('tr', {}, el('td', { colspan: 5, class: 'table-empty' }, 'No sales match these filters.')));
+    tableToggle(months.length);
     t.append(tb);
     $('#tableNote').textContent = months.length ? '* Sales for this month are still being reported. Tap a month to add your listing (asking) price.' : '';
   }
