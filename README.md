@@ -72,6 +72,14 @@ Sales at a listed address then show "Floor X m above/below the 1-in-100 flood le
 **Flood** filter. The 2022 and 2017 floods are estimated per home from their peaks at the Lismore gauge
 (about 14.37 m and 11.59 m AHD, against a gauge 1-in-100 level of 12.4 m) plus the home's own 1-in-100 level.
 Floor levels date from 1996 onwards and may be out of date.
+The map's **Flood layer** (Off / 1-in-100 / 2022 / 2017) shades every listed address by how much water would
+be over its floor.
+
+## Trend lines
+
+Charts can show straight-line trends (fitted to the log of the median, so the slope reads as % per year) over
+the last 1, 3 and 5 years, leaving out the incomplete recent months. In Compare, each search gets one trend
+over the range shown.
 
 ## Put it on your phone
 

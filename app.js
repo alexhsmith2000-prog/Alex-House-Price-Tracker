@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '15'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '16'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -76,7 +76,7 @@
 
   let entries = readJson(K.entries, []); if (!Array.isArray(entries)) entries = [];
   let views = readJson(K.views, null); if (!Array.isArray(views) || !views.length) views = structuredClone(DEFAULT_VIEWS);
-  const prefs = Object.assign({ view: views[0].id, metric: 'median', range: 24, smooth: 3 }, readJson(K.prefs, {}));
+  const prefs = Object.assign({ view: views[0].id, metric: 'median', range: 24, smooth: 3, trend: true, floodLayer: '100' }, readJson(K.prefs, {}));
   if (prefs.view !== COMPARE && !views.some((v) => v.id === prefs.view)) prefs.view = views[0].id;
   if (!METRICS.some((m) => m.key === prefs.metric)) prefs.metric = 'median';
 
@@ -238,7 +238,7 @@
     placeAll();
     matchFlood();
     DATA_INFO = N ? { generated: FILES.updated, latest, excluded, needsReimport: N > 0 && !(C.interest && C.interest.length === N && C.interest.some((x) => x)) } : null;
-    DATA_VER++; salesCache.clear(); streetMatchCache.clear(); RESALE = null;
+    DATA_VER++; salesCache.clear(); streetMatchCache.clear(); RESALE = null; floodPtsCache = null;
   }
 
   async function loadSales() {
@@ -742,6 +742,49 @@
     for (const r of RANGES) rs.append(el('button', { role: 'tab', 'aria-selected': String(prefs.range === r.key), onclick: () => { prefs.range = r.key; savePrefs(); render(); } }, r.label));
     const sm = $('#smoothSeg'); sm.replaceChildren();
     for (const [k, label] of [[1, 'Monthly'], [3, '3-month rolling']]) sm.append(el('button', { role: 'tab', 'aria-selected': String(prefs.smooth === k), onclick: () => { prefs.smooth = k; savePrefs(); render(); } }, label));
+    const tr = $('#trendSeg'); tr.replaceChildren();
+    for (const [k, label] of [[true, 'Trend lines'], [false, 'Off']]) tr.append(el('button', { role: 'tab', 'aria-selected': String(prefs.trend === k), onclick: () => { prefs.trend = k; savePrefs(); renderChart(); renderSegs(); } }, label));
+  }
+
+  // ---------- trend lines: straight-line fit of log(price) over a period, as % a year ----------
+  const TREND_WINDOWS = [{ months: 12, label: '1 yr', color: 'var(--s5)', dash: '2 4' }, { months: 36, label: '3 yrs', color: 'var(--s7)', dash: '7 4' }, { months: 60, label: '5 yrs', color: 'var(--s8)', dash: '12 5' }];
+  // points: [{ month, v }]; returns { a, b, from, to, yearly, n } or null. Leaves out incomplete recent months.
+  function fitTrend(points, fromMonth, toMonth, minPts) {
+    const pts = points.filter((p) => p.month >= fromMonth && p.month <= toMonth && !isProvisional(p.month) && p.v > 0);
+    if (pts.length < minPts) return null;
+    const t0 = pts[0].month;
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (const p of pts) { const t = monthDiff(t0, p.month), yv = Math.log(p.v); sx += t; sy += yv; sxx += t * t; sxy += t * yv; }
+    const n = pts.length, den = n * sxx - sx * sx;
+    if (!den) return null;
+    const b = (n * sxy - sx * sy) / den, a = (sy - b * sx) / n;
+    return { a, b, t0, from: pts[0].month, to: pts[pts.length - 1].month, yearly: Math.exp(12 * b) - 1, n };
+  }
+  const trendAt = (f, m) => Math.exp(f.a + f.b * monthDiff(f.t0, m));
+  // Which trends to draw for the current chart
+  function buildTrends(series) {
+    if (!prefs.trend) return [];
+    const out = [];
+    if (prefs.view === COMPARE) {
+      for (const s of series) {
+        if (!s.points.length) continue;
+        const f = fitTrend(s.points, s.points[0].month, s.points[s.points.length - 1].month, 6);
+        if (f) out.push({ ...f, color: s.color, dash: '5 4', label: s.name });
+      }
+      return out;
+    }
+    const base = series.find((s) => !s.dashed && s.allPoints && s.allPoints.length);
+    if (!base) return out;
+    const complete = base.allPoints.filter((p) => !isProvisional(p.month));
+    if (!complete.length) return out;
+    const last = complete[complete.length - 1].month;
+    for (const w of TREND_WINDOWS) {
+      const from = addMonths(last, -(w.months - 1));
+      if (complete[0].month > addMonths(from, Math.round(w.months * 0.25))) continue; // not enough history for this period
+      const f = fitTrend(base.allPoints, from, last, Math.max(6, Math.round(w.months * 0.5)));
+      if (f) out.push({ ...f, color: w.color, dash: w.dash, label: w.label, base: base.name });
+    }
+    return out;
   }
 
   // last 3 months vs the same 3 months a year earlier
@@ -820,7 +863,7 @@
     const end = all.reduce((a, b) => (a > b ? a : b));
     let start = all.reduce((a, b) => (a < b ? a : b));
     if (prefs.range) { const rs = addMonths(end, -(prefs.range - 1)); if (rs > start) start = rs; }
-    for (const s of series) s.points = s.points.filter((p) => p.month >= start);
+    for (const s of series) { s.allPoints = s.points; s.points = s.points.filter((p) => p.month >= start); }
     return { series, start, end };
   }
 
@@ -836,7 +879,9 @@
     const W = box.clientWidth || 340, H = box.clientHeight || 240;
     const pad = { l: 46, r: 10, t: 12, b: 26 };
     const n = Math.max(1, monthDiff(start, end));
+    const trends = buildTrends(nonEmpty);
     const vals = nonEmpty.flatMap((s) => s.points.map((p) => p.v));
+    for (const t of trends) { const a = t.from > start ? t.from : start; if (a <= t.to) vals.push(trendAt(t, a), trendAt(t, t.to)); }
     const { lo, hi, ticks } = niceTicks(Math.min(...vals), Math.max(...vals));
     const step = (W - pad.l - pad.r) / n;
     const x = (m) => pad.l + monthDiff(start, m) * step;
@@ -867,6 +912,11 @@
         if (s.points.length <= 14 || iso) svg.append(svgEl('circle', { cx: x(p.month), cy: y(p.v), r: 3, fill: s.color }));
       });
     }
+    for (const t of trends) {
+      const a = t.from > start ? t.from : start;
+      if (a > t.to) continue;
+      svg.append(svgEl('line', { x1: x(a), y1: y(trendAt(t, a)), x2: x(t.to), y2: y(trendAt(t, t.to)), stroke: t.color, 'stroke-width': 2, 'stroke-dasharray': t.dash, 'stroke-linecap': 'round', opacity: 0.9 }));
+    }
     const cross = svgEl('line', { y1: pad.t, y2: H - pad.b, stroke: 'var(--muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' });
     svg.append(cross);
     const tip = el('div', { class: 'tip', hidden: true });
@@ -887,6 +937,11 @@
     box.append(svg, tip);
     for (const s of series) legend.append(el('span', {}, el('i', { class: s.dashed ? 'dash' : '', style: s.dashed ? `color:${s.color}` : `background:${s.color}` }), s.name + (s.points.length ? '' : ' (not enough sales)')));
     if (showProv) legend.append(el('span', {}, el('i', { class: 'band' }), 'Recent months, sales still being reported'));
+    for (const t of trends) legend.append(el('span', {}, el('i', { class: 'dash', style: `color:${t.color}` }), `Trend ${t.label}: `, el('b', { class: t.yearly >= 0 ? 'up' : 'down' }, `${t.yearly >= 0 ? '+' : '−'}${Math.abs(t.yearly * 100).toFixed(1)}%/yr`)));
+    const note = $('#trendNote');
+    note.textContent = trends.length && prefs.view !== COMPARE
+      ? `Trend lines are a straight-line fit to the ${trends[0].base.toLowerCase()} over each period, shown as growth per year. Incomplete recent months are left out.`
+      : prefs.trend && prefs.view !== COMPARE && N ? 'Not enough months of sales for a trend line. Try a wider search or the 3-month rolling view.' : '';
   }
 
   let tableAll = false;
@@ -1219,7 +1274,7 @@
     for (const s of list) { if (s.level === 2) { shown.push(s); if (shown.length >= MAX_DOTS) break; } } // list is newest first
     for (const s of shown) {
       const c = s.price <= t1 ? cols[0] : s.price <= t2 ? cols[1] : cols[2];
-      const mk = L.circleMarker([s.lat, s.lon], { radius: opts.small ? 4 : 5.5, weight: 1, color: '#ffffff', fillColor: c, fillOpacity: opts.faint ? 0.45 : 0.9, interactive: !opts.faint });
+      const mk = L.circleMarker([s.lat, s.lon], { radius: opts.small ? 4 : opts.slim ? 3.5 : 5.5, weight: 1, color: '#ffffff', fillColor: c, fillOpacity: opts.faint ? 0.45 : 0.9, interactive: !opts.faint });
       if (!opts.faint) mk.bindPopup(() => `<b>${fmtMoney(s.price)}</b> · ${fmtDate(s.d)}<br>${esc(s.house ? s.house + ' ' : '')}${esc(titleCase(s.street))}, ${esc(titleCase(s.loc))}<br><span style="opacity:.7">${esc(typeName(s.type))}${s.area ? ' · ' + fmtArea(s.area) : ''}${s.approx ? ' · position approximate' : ''}</span>${floodText(s.i) ? `<br>${esc(floodText(s.i))}<br><span style="opacity:.75">${esc(eventText(s.i))}</span>` : ''}${s.street ? `<br><a href="${esc(lookupUrl(s))}" target="_blank" rel="noopener">Look up on property.com.au ↗</a>` : ''}`);
       mk.addTo(layer);
     }
@@ -1232,17 +1287,61 @@
   }
 
   const boundsOf = (list) => { let a = 90, b = 180, c = -90, d = -180; for (const s of list) { const la = s.lat, lo = s.lon; if (la < a) a = la; if (la > c) c = la; if (lo < b) b = lo; if (lo > d) d = lo; } return L.latLngBounds([a, b], [c, d]); };
+  // Flood layer: each address in the council's floor-level list, coloured by water over the floor.
+  const FLOOD_LAYERS = [['off', 'Off'], ['100', '1-in-100'], ['2022', '2022 flood'], ['2017', '2017 flood']];
+  let floodPtsCache = null, floodPtsKey = null;
+  function floodPoints() {
+    if (!FLOOD || !FLOOD.recs || !GEO) return [];
+    if (floodPtsKey === FLOOD && floodPtsCache) return floodPtsCache;
+    const pts = [];
+    for (const [k, r] of Object.entries(FLOOD.recs)) {
+      const [sub, street, num] = k.split('|');
+      const sp = houseSpot(street, num, sub);
+      if (sp) pts.push({ lat: sp[0], lon: sp[1], d100: r[0] - r[1], label: `${num} ${titleCase(street)}, ${titleCase(sub)}` });
+    }
+    floodPtsCache = pts; floodPtsKey = FLOOD;
+    return pts;
+  }
+  const floodLevelOver = (d100, which) => which === '100' ? d100 : overEvent(d100, +which); // floor height above that flood (negative = water over floor)
+  function addFloodLayer(layer, which, opts = {}) {
+    if (!which || which === 'off') return 0;
+    const pts = floodPoints();
+    const deep = cssVar('--down'), shallow = cssVar('--s3'), dry = cssVar('--up');
+    for (const p of pts) {
+      const o = floodLevelOver(p.d100, which);
+      const col = o < -1 ? deep : o < 0 ? shallow : dry;
+      const c = L.circle([p.lat, p.lon], { radius: 30, stroke: false, fillColor: col, fillOpacity: opts.faint ? 0.3 : (o < 0 ? 0.5 : 0.35), interactive: !opts.faint, pane: 'floodPane' });
+      if (!opts.faint) c.bindPopup(() => `<b>${esc(p.label)}</b><br>${o < 0 ? `About ${Math.abs(o).toFixed(1)} m of water over the floor` : `Floor about ${o.toFixed(1)} m above the water`} in ${which === '100' ? 'a 1-in-100 flood' : `the ${which} flood (est.)`}`);
+      c.addTo(layer);
+    }
+    return pts.length;
+  }
+  function floodPane(map) { if (!map.getPane('floodPane')) { const pn = map.createPane('floodPane'); pn.style.zIndex = 350; } }
+
   let mainMap = null, mainLayer = null, lastFit = '';
   function renderMapPanel() {
     const panel = $('#mapPanel');
     const v = currentView();
     if (!v || !N || typeof L === 'undefined') { panel.hidden = true; return; }
     panel.hidden = false;
-    if (!mainMap) { mainMap = makeMap($('#map')); mainLayer = L.layerGroup().addTo(mainMap); }
+    if (!mainMap) { mainMap = makeMap($('#map')); floodPane(mainMap); mainLayer = L.layerGroup().addTo(mainMap); }
     mainLayer.clearLayers();
+    const hasFlood = !!(FLOOD && FLOOD.recs && Object.keys(FLOOD.recs).length && GEO);
+    $('#floodLayerRow').hidden = !hasFlood;
+    let floodShown = 0;
+    if (hasFlood) {
+      const seg = $('#floodLayerSeg'); seg.replaceChildren();
+      for (const [k, label] of FLOOD_LAYERS) seg.append(el('button', { role: 'tab', 'aria-selected': String(prefs.floodLayer === k), onclick: () => { prefs.floodLayer = k; savePrefs(); renderMapPanel(); } }, label));
+      floodShown = addFloodLayer(mainLayer, prefs.floodLayer);
+      const fl = $('#floodLegend'); fl.replaceChildren();
+      if (prefs.floodLayer !== 'off') {
+        [['--down', 'Over 1 m of water over the floor'], ['--s3', 'Up to 1 m over the floor'], ['--up', 'Floor above the water']].forEach(([c, t]) => fl.append(el('span', {}, el('i', { class: 'dot', style: `background:${cssVar(c)};opacity:.7` }), t)));
+        fl.append(el('span', {}, `${floodShown.toLocaleString('en-AU')} addresses from the council list${prefs.floodLayer === '100' ? '' : ' (estimated)'}`));
+      }
+    }
     const list = salesFor(v);
     const placed = list.filter((s) => DER.level[s.i] > 0);
-    const res = addDots(mainLayer, list);
+    const res = addDots(mainLayer, list, { slim: !!(FLOOD && GEO && prefs.floodLayer !== 'off') });
     let houseN = 0; for (const s of list) if (DER.level[s.i] === 2) houseN++;
     const sl = shapeLayer(v.shape); if (sl) sl.addTo(mainLayer);
     const leg = $('#mapLegend'); leg.replaceChildren();
@@ -1290,6 +1389,8 @@
       });
     }
     ctxLayer.clearLayers();
+    floodPane(drawMap);
+    if (FLOOD && GEO) addFloodLayer(ctxLayer, prefs.floodLayer === 'off' ? '100' : prefs.floodLayer, { faint: true }); // helps trace the floodplain
     const context = salesFor({ ...editing, shape: null });
     addDots(ctxLayer, context, { small: true, faint: true });
     setTimeout(() => {

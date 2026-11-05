@@ -44,12 +44,21 @@
       </div>
       <div id="chart" class="chart"></div>
       <div id="legend" class="legend"></div>
-      <div class="panel-foot"><div class="seg small" id="smoothSeg" role="tablist" aria-label="Smoothing"></div></div>
+      <div class="panel-foot">
+        <div class="seg small" id="trendSeg" role="tablist" aria-label="Trend lines"></div>
+        <div class="seg small" id="smoothSeg" role="tablist" aria-label="Smoothing"></div>
+      </div>
+      <p class="hint" id="trendNote"></p>
     </section>
 
     <section class="panel" id="mapPanel" hidden>
       <div class="panel-head"><h2>Map</h2><div class="legend" id="mapLegend"></div></div>
       <div id="map" class="map"></div>
+      <div class="floodrow" id="floodLayerRow" hidden>
+        <span class="hint">Flood layer</span>
+        <div class="seg small" id="floodLayerSeg" role="tablist" aria-label="Flood layer"></div>
+      </div>
+      <div class="legend" id="floodLegend"></div>
       <p class="hint" id="mapNote"></p>
     </section>
 
