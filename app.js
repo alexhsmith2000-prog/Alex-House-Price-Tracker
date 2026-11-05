@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '9'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '10'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -62,6 +62,7 @@
   const PALETTE = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)', 'var(--s7)', 'var(--s8)'];
   const RANGES = [{ key: 12, label: '1Y' }, { key: 24, label: '2Y' }, { key: 36, label: '3Y' }, { key: 0, label: 'All' }];
   const METRICS = [{ key: 'median', label: 'Median' }, { key: 'avg', label: 'Average' }, { key: 'both', label: 'Both' }];
+  const MIN_PRICE = 10000; // below this it's a token or family transfer, not a market sale
   const MIN_SALES = 3; // months with fewer sales are left off the chart (too noisy)
   const PROVISIONAL_MONTHS = 2; // latest months are incomplete: sales take weeks to be reported
   const COMPARE = 'compare';
@@ -167,7 +168,7 @@
   }
 
   const COLS = { d: Uint32Array, price: Float64Array, area: Float64Array, loc: Uint32Array, street: Uint32Array, house: Uint32Array,
-    zone: Uint16Array, purpose: Uint16Array, nature: Uint8Array, strata: Uint8Array, dl: Float64Array, dealing: Uint32Array };
+    zone: Uint16Array, purpose: Uint16Array, nature: Uint8Array, strata: Uint8Array, dl: Float64Array, dealing: Uint32Array, interest: Uint8Array };
   const emptyStore = () => ({ v: 2, n: 0, ...Object.fromEntries(Object.entries(COLS).map(([k, T]) => [k, new T(0)])),
     dict: { loc: [], street: [], house: [], zone: [], purpose: [], dealing: [''] } });
 
@@ -204,11 +205,14 @@
     DER = { locName, locPc, mi: new Uint16Array(N), type: new Uint8Array(N), lat: new Float64Array(N).fill(NaN), lon: new Float64Array(N).fill(NaN),
       level: new Uint8Array(N), approx: new Uint8Array(N), keep: new Uint8Array(N) };
     const typeCache = new Map(), seenDeal = new Set();
+    let excluded = 0;
     LOC_COUNTS = new Map();
     let latest = 0;
     const locCount = new Uint32Array(locName.length);
     for (let i = 0; i < N; i++) {
       const dg = C.dealing[i];
+      // leave out records that aren't a normal sale of a whole property: token/family transfers and part shares
+      if (C.price[i] < MIN_PRICE || (C.interest && C.interest[i] && C.interest[i] < 100)) { excluded++; continue; }
       if (dg) { const k = dg + '|' + C.price[i]; if (seenDeal.has(k)) continue; seenDeal.add(k); }
       DER.keep[i] = 1;
       const d = C.d[i];
@@ -231,7 +235,7 @@
       const c = LOC_COUNTS.get(name) || { pc: locPc[li], n: 0 }; c.n += locCount[li]; LOC_COUNTS.set(name, c);
     });
     placeAll();
-    DATA_INFO = N ? { generated: FILES.updated, latest } : null;
+    DATA_INFO = N ? { generated: FILES.updated, latest, excluded, needsReimport: N > 0 && !(C.interest && C.interest.length === N && C.interest.some((x) => x)) } : null;
     DATA_VER++; salesCache.clear();
   }
 
@@ -259,7 +263,8 @@
 
   // Import helper: grows columns as plain arrays, then saves them as typed arrays.
   function builder() {
-    const cols = Object.fromEntries(Object.keys(COLS).map((k) => [k, Array.from(C[k])]));
+    // columns added in later versions are missing from older stores: start them as zeros
+    const cols = Object.fromEntries(Object.entries(COLS).map(([k, T]) => [k, Array.from(C[k] || new T(C.n))]));
     const dict = structuredClone(C.dict);
     const idx = Object.fromEntries(Object.entries(dict).map(([k, arr]) => [k, new Map(arr.map((v, i) => [v, i]))]));
     const intern = (k, v) => { let i = idx[k].get(v); if (i === undefined) { i = dict[k].length; dict[k].push(v); idx[k].set(v, i); } return i; };
@@ -273,7 +278,7 @@
     return {
       ensureKeys,
       get added() { return added; },
-      // r: [contract, locality, postcode, price, area|null, zone, nature, purpose, strata, street, downloaded, dealing, house]
+      // r: [contract, locality, postcode, price, area|null, zone, nature, purpose, strata, street, downloaded, dealing, house, % interest (0 = not stated)]
       put(key, r) {
         if (!keyIdx) { keys = keys || []; keyIdx = keyIdx || new Map(); }
         const dl = Number(String(r[10] || '').replace(/\D/g, '').slice(0, 12)) || 0;
@@ -283,7 +288,7 @@
         cols.d[i] = r[0]; cols.loc[i] = intern('loc', `${r[1]}|${r[2]}`); cols.price[i] = r[3]; cols.area[i] = r[4] == null ? NaN : r[4];
         cols.zone[i] = intern('zone', r[5] || ''); cols.nature[i] = r[6] ? r[6].charCodeAt(0) : 0; cols.purpose[i] = intern('purpose', r[7] || '');
         cols.strata[i] = r[8] ? 1 : 0; cols.street[i] = intern('street', r[9] || ''); cols.dl[i] = dl;
-        cols.dealing[i] = r[11] ? intern('dealing', r[11]) : 0; cols.house[i] = intern('house', r[12] || '');
+        cols.dealing[i] = r[11] ? intern('dealing', r[11]) : 0; cols.house[i] = intern('house', r[12] || ''); cols.interest[i] = r[13] || 0;
       },
       async save(files, updated) {
         const store = { v: 2, n: cols.d.length, dict, ...Object.fromEntries(Object.entries(COLS).map(([k, T]) => [k, T.from(cols[k])])) };
@@ -480,6 +485,9 @@
     return new Uint8Array(await new Response(stream).arrayBuffer());
   }
 
+  // % interest of sale: 100 for a whole property; less for a part share (e.g. buying out a co-owner).
+  const interestPct = (v) => { const n = parseFloat(String(v || '').trim()); return isFinite(n) && n > 0 ? Math.min(100, Math.max(1, Math.round(n))) : 0; };
+
   // 'B' records, post-2001 Valuer General format (semicolon separated). All of NSW is kept.
   function parseDat(text, b) {
     let n = 0;
@@ -493,7 +501,7 @@
       const a = parseFloat(f[11]);
       const area = isFinite(a) ? Math.round(a * (f[12].trim().toUpperCase() === 'H' ? 10000 : 1)) : null;
       b.put(`${f[1].trim()}|${f[2].trim()}|${f[3].trim()}|${contract}`, [+contract, f[9].trim().toUpperCase(), f[10].trim(), price, area, f[16].trim().toUpperCase(),
-        f[17].trim().toUpperCase().slice(0, 1), f[18].trim().toUpperCase(), f[19].trim() ? 1 : 0, f[8].trim().toUpperCase(), f[4].trim(), f[23].trim(), f[7].trim()]);
+        f[17].trim().toUpperCase().slice(0, 1), f[18].trim().toUpperCase(), f[19].trim() ? 1 : 0, f[8].trim().toUpperCase(), f[4].trim(), f[23].trim(), f[7].trim(), interestPct(f[22])]);
       n++;
     }
     return n;
@@ -555,6 +563,7 @@
     }
     return out;
   };
+  const historyStart = () => { try { return +localStorage.getItem('nr-prices.historyFrom') || 2024; } catch { return 2024; } };
   // every file not yet imported: yearly files for past years, weekly files for this year
   function missingFiles() {
     const have = new Set(FILES.files);
@@ -562,7 +571,7 @@
     const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
     const year = today.getUTCFullYear();
     const urls = [];
-    for (let y = 2024; y < year; y++) {
+    for (let y = historyStart(); y < year; y++) {
       if (have.has(`yearly/${y}`)) continue;
       // early in a new year the yearly file may not be out yet: fall back to its weekly files
       if (today.getUTCMonth() === 0 && y === year - 1) { for (const w of mondaysOf(y, today)) if (!have.has(`weekly/${w}`)) urls.push(`${VG_BASE}/weekly/${w}.zip`); continue; }
@@ -587,12 +596,19 @@
     let last = ''; try { last = localStorage.getItem('nr-prices.lastImport') || ''; } catch { /* ignore */ }
     let lastErr = ''; try { lastErr = localStorage.getItem('nr-prices.lastError') || ''; } catch { /* ignore */ }
     $('#lastImport').textContent = [last && `Last import: ${last}`, lastErr && `Last error: ${lastErr}`].filter(Boolean).join(' — ');
+    const hs = $('#historyFrom');
+    if (hs && !hs.options.length) {
+      const y = new Date().getFullYear();
+      for (let k = y - 1; k >= 2016; k--) hs.append(el('option', { value: k }, `${k} (${y - k + 1} years)`));
+      hs.value = String(historyStart());
+      hs.addEventListener('change', () => { try { localStorage.setItem('nr-prices.historyFrom', hs.value); } catch { /* ignore */ } renderImportStatus(); });
+    }
     const br = $('#regionBreakdown');
     if (br) {
       const counts = new Map();
       for (const [, c] of LOC_COUNTS) { const a = AREAS.find((x) => x.group !== 'Northern Rivers' && x.id !== 'nsw' && areaHas(x, c.pc)) || (areaHas(areaOf('all'), c.pc) ? areaOf('all') : null); const k = a ? a.name : 'Other'; counts.set(k, (counts.get(k) || 0) + c.n); }
       const parts = [...counts].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n.toLocaleString('en-AU')}`);
-      br.textContent = N ? `Sales by area: ${parts.join(' · ')}. Imported files: ${FILES.files.length ? FILES.files.length + ' (' + FILES.files.slice(0, 3).map((f) => f.replace(/^\w+\//, '')).join(', ') + (FILES.files.length > 3 ? ', …' : '') + ')' : 'none recorded'}.` : '';
+      br.textContent = N ? `${DATA_INFO && DATA_INFO.needsReimport ? 'Import your files again (nothing will double up) so part-share sales can be left out. ' : ''}${DATA_INFO && DATA_INFO.excluded ? `${DATA_INFO.excluded.toLocaleString('en-AU')} token transfers and part-share sales left out. ` : ''}Sales by area: ${parts.join(' · ')}. Imported files: ${FILES.files.length ? FILES.files.length + ' (' + FILES.files.slice(0, 3).map((f) => f.replace(/^\w+\//, '')).join(', ') + (FILES.files.length > 3 ? ', …' : '') + ')' : 'none recorded'}.` : '';
     }
     const latest = missing.filter((u) => u.includes('/weekly/')).pop();
     const link = $('#latestFileLink');
@@ -635,7 +651,7 @@
     const h = $('#lastUpdated');
     if (!DATA_INFO) { h.textContent = 'No sold-price data imported yet'; return; }
     const g = new Date(DATA_INFO.generated);
-    h.textContent = `${N.toLocaleString('en-AU')} sales · latest ${fmtDate(DATA_INFO.latest)} · updated ${g.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`;
+    h.textContent = `${(N - (DATA_INFO.excluded || 0)).toLocaleString('en-AU')} sales · latest ${fmtDate(DATA_INFO.latest)} · updated ${g.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`;
   }
 
   function renderChips() {
