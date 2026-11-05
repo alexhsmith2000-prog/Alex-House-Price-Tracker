@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '7'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '8'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -534,7 +534,9 @@
     toast('Saving…');
     try { await b.save([...done].sort(), new Date().toISOString()); } catch (e) { console.warn(e); toast('Could not save the imported sales on this phone (storage full?).'); return; }
     derive(); render(); renderImportStatus();
-    toast(`Imported ${ok} file${ok === 1 ? '' : 's'}: ${read.toLocaleString('en-AU')} NSW sales read, ${b.added.toLocaleString('en-AU')} new${bad.length ? ` · ${bad.length} skipped (not a sales file — that week may not be published yet)` : ''}`);
+    const msg = `Imported ${ok} file${ok === 1 ? '' : 's'}: ${read.toLocaleString('en-AU')} NSW sales read, ${b.added.toLocaleString('en-AU')} new${bad.length ? ` · ${bad.length} skipped (${bad.slice(0, 3).join(', ')}${bad.length > 3 ? ', …' : ''}: not a sales file)` : ''}`;
+    try { localStorage.setItem('nr-prices.lastImport', `${new Date().toLocaleString('en-AU')}: ${msg}`); } catch { /* ignore */ }
+    toast(msg); renderImportStatus();
   }
 
   const mondaysOf = (year, until) => {
@@ -573,6 +575,16 @@
       : n
       ? `${n.toLocaleString('en-AU')} sales imported on this phone${years.length ? ` · years ${years.join(', ')}` : ''}${weeks.length ? ` · latest week ${fmtDate(weeks[weeks.length - 1].slice(7))}` : ''}. ${missing.length ? `${missing.length} file${missing.length === 1 ? '' : 's'} still to download.` : 'Up to date.'}`
       : `No sales imported yet. ${missing.length} files to download to build your history (see the steps below).`;
+    let last = ''; try { last = localStorage.getItem('nr-prices.lastImport') || ''; } catch { /* ignore */ }
+    let lastErr = ''; try { lastErr = localStorage.getItem('nr-prices.lastError') || ''; } catch { /* ignore */ }
+    $('#lastImport').textContent = [last && `Last import: ${last}`, lastErr && `Last error: ${lastErr}`].filter(Boolean).join(' — ');
+    const br = $('#regionBreakdown');
+    if (br) {
+      const counts = new Map();
+      for (const [, c] of LOC_COUNTS) { const a = AREAS.find((x) => x.group !== 'Northern Rivers' && x.id !== 'nsw' && areaHas(x, c.pc)) || (areaHas(areaOf('all'), c.pc) ? areaOf('all') : null); const k = a ? a.name : 'Other'; counts.set(k, (counts.get(k) || 0) + c.n); }
+      const parts = [...counts].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n.toLocaleString('en-AU')}`);
+      br.textContent = N ? `Sales by area: ${parts.join(' · ')}. Imported files: ${FILES.files.length ? FILES.files.length + ' (' + FILES.files.slice(0, 3).map((f) => f.replace(/^\w+\//, '')).join(', ') + (FILES.files.length > 3 ? ', …' : '') + ')' : 'none recorded'}.` : '';
+    }
     const latest = missing.filter((u) => u.includes('/weekly/')).pop();
     const link = $('#latestFileLink');
     link.hidden = !latest;
@@ -1077,7 +1089,9 @@
     for (const l of editing.locs) if (!LOC_COUNTS.has(l)) locs.push([l, { n: 0 }]); // chosen but no sales yet
     const box = $('#fLocs'); box.replaceChildren();
     const q = $('#fLocSearch').value.trim().toLowerCase();
-    if (!locs.length) box.append(el('p', { class: 'hint' }, 'Locations appear here once sales data has been imported.'));
+    if (!locs.length) box.append(el('p', { class: 'hint' }, N
+      ? `Your imported sales don't include any from ${area.name} yet. Check ⋯ (top right) to see which areas your data covers, and import more sales files if needed.`
+      : 'Locations appear here once sales data has been imported (⋯ → Import sales files).'));
     // chosen ones first, then the busiest; search narrows the list
     const chosen = new Set(editing.locs);
     const shownLocs = locs.filter(([name]) => !q || name.toLowerCase().includes(q))
