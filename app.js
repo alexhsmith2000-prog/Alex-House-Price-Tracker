@@ -4,6 +4,17 @@
 (() => {
   'use strict';
 
+  const APP_VERSION = '7'; // keep in step with version.json and VERSION in sw.js
+
+  // Show unexpected errors instead of failing silently, so they can be reported.
+  const reportError = (msg) => {
+    try { localStorage.setItem('nr-prices.lastError', `${new Date().toLocaleString('en-AU')}: ${msg}`); } catch { /* ignore */ }
+    const t = document.getElementById('toast');
+    if (t) { t.textContent = `Something went wrong: ${msg}`; t.hidden = false; setTimeout(() => { t.hidden = true; }, 8000); }
+  };
+  window.addEventListener('error', (e) => reportError(e.message || String(e.error)));
+  window.addEventListener('unhandledrejection', (e) => reportError((e.reason && e.reason.message) || String(e.reason)));
+
   // ---------- reference data ----------
   // Areas are groups of postcodes. Outside the Northern Rivers they are broad regions, so edges are approximate.
   const AREAS = [
@@ -1301,5 +1312,30 @@
 
   render();
   loadSales();
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
+
+  // Is a newer version published? Offer a one-tap update (iPhones keep old copies of home-screen apps).
+  async function updateNow() {
+    toast('Updating…');
+    try {
+      const regs = navigator.serviceWorker ? await navigator.serviceWorker.getRegistrations() : [];
+      await Promise.all(regs.map((r) => r.unregister()));
+      if (window.caches) await Promise.all((await caches.keys()).map((k) => caches.delete(k)));
+    } catch { /* reload anyway */ }
+    location.reload();
+  }
+  async function checkForUpdate() {
+    try {
+      const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const { version } = await res.json();
+      $('#versionInfo').textContent = `App version ${APP_VERSION}${version !== APP_VERSION ? ` · version ${version} is available` : ' · up to date'}`;
+      if (version !== APP_VERSION) $('#updateBar').hidden = false;
+    } catch { $('#versionInfo').textContent = `App version ${APP_VERSION} (offline)`; }
+  }
+  $('#updateBtn').addEventListener('click', updateNow);
+  $('#forceUpdate').addEventListener('click', updateNow);
+  $('#versionInfo').textContent = `App version ${APP_VERSION}`;
+  checkForUpdate();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
 })();

@@ -25,6 +25,11 @@
     <button class="icon-btn" id="menuBtn" aria-label="Data and settings">⋯</button>
   </header>
 
+  <div class="updatebar" id="updateBar" hidden>
+    <span>A new version of the app is ready.</span>
+    <button class="primary small" id="updateBtn">Update now</button>
+  </div>
+
   <nav class="chips" id="viewChips" aria-label="Saved searches"></nav>
 
   <main>
@@ -234,6 +239,9 @@ Ballina,2026-09,989000,142,Domain</pre>
       <hr>
       <button class="ghost block" id="resetViews">Restore the starting searches</button>
       <button class="ghost danger block" id="clearAll">Delete all listing prices</button>
+      <hr>
+      <p class="hint" id="versionInfo"></p>
+      <button class="ghost block" id="forceUpdate">Reload the latest version</button>
       <div class="actions"><span class="spacer"></span><button class="ghost" id="closeMenu">Close</button></div>
     </div>
   </dialog>

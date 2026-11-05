@@ -270,3 +270,11 @@ dialog.fullmap[open] { display: grid; }
 .radius-row span { min-width: 56px; text-align: right; font-variant-numeric: tabular-nums; }
 button:disabled { opacity: .4; }
 .leaflet-control-attribution { font-size: 10px; }
+
+/* ---- v7: update banner ---- */
+.updatebar {
+  margin: 0 16px 8px; padding: 10px 12px; border-radius: var(--radius); background: var(--accent-soft);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: .9rem;
+}
+.updatebar[hidden] { display: none; }
+button.primary.small { padding: 8px 14px; font-size: .88rem; background: var(--accent); }
