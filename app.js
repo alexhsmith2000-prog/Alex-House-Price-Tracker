@@ -1,19 +1,38 @@
-/* Northern Rivers Prices — sold-price tracker with filters (offline PWA, no dependencies).
- * Sold prices: data/sales.json, built daily from NSW Valuer General sales data.
+/* Northern Rivers Prices — NSW sold-price tracker with filters and maps (offline PWA).
+ * Sold prices: NSW Valuer General sales files, imported on the phone (IndexedDB).
  * Listing (asking) prices: entered by hand, stored on the phone. */
 (() => {
   'use strict';
 
   // ---------- reference data ----------
+  // Areas are groups of postcodes. Outside the Northern Rivers they are broad regions, so edges are approximate.
   const AREAS = [
-    { id: 'casino', name: 'Casino & district', pcs: ['2470'] },
-    { id: 'lismore', name: 'Lismore & district', pcs: ['2480'] },
-    { id: 'evans', name: 'Evans Head & Mid-Richmond', pcs: ['2471', '2472', '2473'] },
-    { id: 'ballina', name: 'Ballina, Lennox & Alstonville', pcs: ['2477', '2478'] },
-    { id: 'kyogle', name: 'Kyogle & Upper Richmond', pcs: ['2469', '2474', '2475', '2476'] },
-    { id: 'bangalow', name: 'Bangalow', pcs: ['2479'] },
-    { id: 'all', name: 'All Northern Rivers', pcs: null },
+    { id: 'casino', group: 'Northern Rivers', name: 'Casino & district', pcs: '2470' },
+    { id: 'lismore', group: 'Northern Rivers', name: 'Lismore & district', pcs: '2480' },
+    { id: 'evans', group: 'Northern Rivers', name: 'Evans Head & Mid-Richmond', pcs: '2471-2473' },
+    { id: 'ballina', group: 'Northern Rivers', name: 'Ballina, Lennox & Alstonville', pcs: '2477-2478' },
+    { id: 'kyogle', group: 'Northern Rivers', name: 'Kyogle & Upper Richmond', pcs: '2469,2474-2476' },
+    { id: 'bangalow', group: 'Northern Rivers', name: 'Bangalow', pcs: '2479' },
+    { id: 'all', group: 'Northern Rivers', name: 'All Northern Rivers', pcs: '2469-2480' },
+    { id: 'tweed', group: 'North Coast', name: 'Tweed & Byron', pcs: '2481-2490' },
+    { id: 'clarence', group: 'North Coast', name: 'Clarence Valley (Grafton, Yamba)', pcs: '2460-2466' },
+    { id: 'midnorth', group: 'North Coast', name: 'Mid North Coast (Coffs, Port Macquarie)', pcs: '2415-2459' },
+    { id: 'newcastle', group: 'Hunter', name: 'Newcastle & Lake Macquarie', pcs: '2264-2267,2278,2280-2308' },
+    { id: 'maitland', group: 'Hunter', name: 'Maitland, Cessnock & Port Stephens', pcs: '2309-2324' },
+    { id: 'hunter', group: 'Hunter', name: 'Upper Hunter', pcs: '2325-2339' },
+    { id: 'centralcoast', group: 'Sydney & surrounds', name: 'Central Coast', pcs: '2250-2263' },
+    { id: 'sydney', group: 'Sydney & surrounds', name: 'Greater Sydney & Blue Mountains', pcs: '2000-2249,2555-2574,2740-2786' },
+    { id: 'illawarra', group: 'South', name: 'Illawarra & South Coast', pcs: '2500-2551' },
+    { id: 'highlands', group: 'South', name: 'Southern Highlands & Tablelands', pcs: '2575-2599' },
+    { id: 'monaro', group: 'South', name: 'Queanbeyan, Snowy & Monaro', pcs: '2600-2639' },
+    { id: 'newengland', group: 'Inland', name: 'New England & North West', pcs: '2340-2411' },
+    { id: 'riverina', group: 'Inland', name: 'Riverina & Murray', pcs: '2640-2739' },
+    { id: 'centralwest', group: 'Inland', name: 'Central West & Orana', pcs: '2787-2879' },
+    { id: 'farwest', group: 'Inland', name: 'Far West', pcs: '2880-2899' },
+    { id: 'nsw', group: 'Whole state', name: 'All of NSW', pcs: null },
   ];
+  for (const a of AREAS) a.ranges = a.pcs ? a.pcs.split(',').map((r) => { const [lo, hi] = r.split('-').map(Number); return [lo, hi || lo]; }) : null;
+  const areaHas = (area, pc) => { if (!area.ranges) return true; const n = +pc; return area.ranges.some(([lo, hi]) => n >= lo && n <= hi); };
   const TYPES = [
     { id: 'house', name: 'House in town' },
     { id: 'unit', name: 'Unit / townhouse' },
@@ -83,7 +102,7 @@
   const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
   const titleCase = (s) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
   const fmtArea = (m2) => m2 == null ? '' : m2 >= 10000 ? `${(m2 / 10000).toFixed(m2 >= 1e6 ? 0 : 1)} ha` : `${Math.round(m2).toLocaleString('en-AU')} m²`;
-  const median = (arr) => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); const i = a.length >> 1; return a.length % 2 ? a[i] : (a[i - 1] + a[i]) / 2; };
+  const median = (arr) => { if (!arr.length) return null; const a = Float64Array.from(arr).sort(); const i = a.length >> 1; return a.length % 2 ? a[i] : (a[i - 1] + a[i]) / 2; };
   const mean = (arr) => arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null;
   const areaOf = (id) => AREAS.find((a) => a.id === id) || AREAS[AREAS.length - 1];
   const typeName = (id) => TYPES.find((t) => t.id === id)?.name || id;
@@ -112,9 +131,15 @@
   function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2800); }
 
   // ---------- sales data ----------
-  let SALES = [];
+  // Sales are kept as columns (typed arrays): half a million NSW sales take ~30 MB this way, and
+  // load from IndexedDB quickly. Row objects are tiny views onto the columns.
+  let C = null;            // stored columns + dictionaries (see emptyStore)
+  let N = 0;               // number of sales
+  let DER = null;          // derived columns: month index, type, position, keep-mask
   let DATA_INFO = null;
+  let DATA_VER = 0;        // bumps whenever the data changes (clears caches)
   let LOC_COUNTS = new Map(); // locality → { pc, n }
+  let FILES = { files: [], updated: null };
 
   // Sort a sale into one of TYPES using strata, land use, zoning and land size.
   const TOWN_ZONE = /^(R[1-4]|RU5|MU|B[1-8]|E1|E2)$/;
@@ -130,56 +155,165 @@
     return 'house';
   }
 
-  // Two sources, merged: data/sales.json published with the app (if any), and files the user
-  // imports on the phone (kept in IndexedDB).
-  let SERVER = [], SERVER_GENERATED = null;
-  let LOCAL = { records: {}, files: [], updated: null };
+  const COLS = { d: Uint32Array, price: Float64Array, area: Float64Array, loc: Uint32Array, street: Uint32Array, house: Uint32Array,
+    zone: Uint16Array, purpose: Uint16Array, nature: Uint8Array, strata: Uint8Array, dl: Float64Array, dealing: Uint32Array };
+  const emptyStore = () => ({ v: 2, n: 0, ...Object.fromEntries(Object.entries(COLS).map(([k, T]) => [k, new T(0)])),
+    dict: { loc: [], street: [], house: [], zone: [], purpose: [], dealing: [''] } });
 
-  function decodeServer(json) {
-    const L = json.localities, Z = json.zones, P = json.purposes, St = json.streets;
-    SERVER = json.sales.map(([d, li, price, area, zi, nature, pi, strata, si, house]) => ({
-      d, loc: L[li][0], pc: L[li][1], price, area, zone: Z[zi] || '', nature: nature || '', purpose: P[pi] || '', strata: !!strata, street: St[si] || '', house: house || '',
-    }));
-    SERVER_GENERATED = json.generated;
+  const MONTH_STR = []; // month index → 'YYYY-MM'
+  const monthStr = (mi) => MONTH_STR[mi] || (MONTH_STR[mi] = `${Math.floor(mi / 12)}-${String((mi % 12) + 1).padStart(2, '0')}`);
+  const TYPE_IDS = TYPES.map((t) => t.id);
+
+  class Row {
+    constructor(i) { this.i = i; }
+    get d() { return C.d[this.i]; }
+    get m() { return monthStr(DER.mi[this.i]); }
+    get loc() { return DER.locName[C.loc[this.i]]; }
+    get pc() { return DER.locPc[C.loc[this.i]]; }
+    get price() { return C.price[this.i]; }
+    get area() { const a = C.area[this.i]; return Number.isNaN(a) ? null : a; }
+    get zone() { return C.dict.zone[C.zone[this.i]] || ''; }
+    get purpose() { return C.dict.purpose[C.purpose[this.i]] || ''; }
+    get nature() { return C.nature[this.i] ? String.fromCharCode(C.nature[this.i]) : ''; }
+    get strata() { return !!C.strata[this.i]; }
+    get street() { return C.dict.street[C.street[this.i]] || ''; }
+    get house() { return C.dict.house[C.house[this.i]] || ''; }
+    get type() { return TYPE_IDS[DER.type[this.i]]; }
+    get lat() { const v = DER.lat[this.i]; return Number.isNaN(v) ? null : v; }
+    get lon() { const v = DER.lon[this.i]; return Number.isNaN(v) ? null : v; }
+    get level() { return DER.level[this.i]; } // 2 = house position, 1 = suburb centre, 0 = not placed
+    get approx() { return DER.level[this.i] === 2 && DER.approx[this.i] === 1; }
   }
 
-  function rebuildSales() {
-    const seen = new Set(), dealings = new Set(), list = [];
-    const add = (s) => {
-      const sig = `${s.d}|${s.loc}|${s.price}|${s.street}`;
-      if (seen.has(sig)) return;
-      seen.add(sig);
-      const ds = String(s.d);
-      s.m = `${ds.slice(0, 4)}-${ds.slice(4, 6)}`;
-      s.type = classify(s);
-      placeSale(s);
-      list.push(s);
-    };
-    for (const r of Object.values(LOCAL.records)) {
-      const [d, loc, pc, price, area, zone, nature, purpose, strata, street, , dealing, house] = r;
-      if (dealing) { const dk = `${dealing}|${price}`; if (dealings.has(dk)) continue; dealings.add(dk); } // one dealing, several lots
-      add({ d, loc, pc, price, area, zone, nature, purpose, strata: !!strata, street, house: house || '' });
-    }
-    for (const s of SERVER) add({ ...s });
-    SALES = list;
+  // Derive month, type and map position for every sale; drop repeat lots of one multi-lot sale.
+  function derive() {
+    N = C.n;
+    const locName = [], locPc = [];
+    for (const k of C.dict.loc) { const j = k.lastIndexOf('|'); locName.push(k.slice(0, j)); locPc.push(k.slice(j + 1)); }
+    DER = { locName, locPc, mi: new Uint16Array(N), type: new Uint8Array(N), lat: new Float64Array(N).fill(NaN), lon: new Float64Array(N).fill(NaN),
+      level: new Uint8Array(N), approx: new Uint8Array(N), keep: new Uint8Array(N) };
+    const typeCache = new Map(), seenDeal = new Set();
     LOC_COUNTS = new Map();
     let latest = 0;
-    for (const s of list) {
-      if (s.d > latest) latest = s.d;
-      const c = LOC_COUNTS.get(s.loc) || { pc: s.pc, n: 0 }; c.n++; LOC_COUNTS.set(s.loc, c);
+    const locCount = new Uint32Array(locName.length);
+    for (let i = 0; i < N; i++) {
+      const dg = C.dealing[i];
+      if (dg) { const k = dg + '|' + C.price[i]; if (seenDeal.has(k)) continue; seenDeal.add(k); }
+      DER.keep[i] = 1;
+      const d = C.d[i];
+      DER.mi[i] = Math.floor(d / 10000) * 12 + (Math.floor(d / 100) % 100) - 1;
+      const a = C.area[i];
+      const bucket = Number.isNaN(a) ? 'n' : a < 4000 ? 'a' : a < 100000 ? 'b' : a < 400000 ? 'c' : 'd';
+      const tk = `${C.zone[i]}|${C.purpose[i]}|${C.nature[i]}|${C.strata[i]}|${bucket}`;
+      let t = typeCache.get(tk);
+      if (t === undefined) {
+        t = TYPE_IDS.indexOf(classify({ zone: C.dict.zone[C.zone[i]] || '', purpose: C.dict.purpose[C.purpose[i]] || '', nature: C.nature[i] ? String.fromCharCode(C.nature[i]) : '',
+          strata: !!C.strata[i], area: Number.isNaN(a) ? null : a }));
+        typeCache.set(tk, t);
+      }
+      DER.type[i] = t;
+      if (d > latest) latest = d;
+      locCount[C.loc[i]]++;
     }
-    const gens = [SERVER_GENERATED, LOCAL.updated].filter(Boolean).sort();
-    DATA_INFO = list.length ? { generated: gens[gens.length - 1], latest } : null;
+    locName.forEach((name, li) => {
+      if (!locCount[li]) return;
+      const c = LOC_COUNTS.get(name) || { pc: locPc[li], n: 0 }; c.n += locCount[li]; LOC_COUNTS.set(name, c);
+    });
+    placeAll();
+    DATA_INFO = N ? { generated: FILES.updated, latest } : null;
+    DATA_VER++; salesCache.clear();
   }
 
   async function loadSales() {
-    const stored = await idbGet('local-sales');
-    if (stored && stored.records) LOCAL = stored;
-    const [salesRes, geoRes] = await Promise.allSettled([fetch('data/sales.json', { cache: 'no-cache' }), fetch('data/geo.json')]);
-    try { if (salesRes.value && salesRes.value.ok) decodeServer(await salesRes.value.json()); } catch { /* no published data: fine */ }
-    try { if (geoRes.value && geoRes.value.ok) loadGeo(await geoRes.value.json()); } catch { /* map positions unavailable */ }
-    rebuildSales();
+    const [stored, geoRes, subRes] = await Promise.all([idbGet('store2'), fetch('data/geo.json').catch(() => null), fetch('data/suburbs.json').catch(() => null)]);
+    C = stored && stored.v === 2 ? stored : emptyStore();
+    FILES = (await idbGet('store2-files')) || { files: [], updated: null };
+    try { if (geoRes && geoRes.ok) loadGeo(await geoRes.json()); } catch { /* house positions unavailable */ }
+    try { if (subRes && subRes.ok) loadSuburbs(await subRes.json()); } catch { /* suburb positions unavailable */ }
+    if (!stored) await migrateOldStore();
+    derive();
     render();
+  }
+
+  // earlier versions kept Northern Rivers sales as a plain object: convert once
+  async function migrateOldStore() {
+    const old = await idbGet('local-sales');
+    if (!old || !old.records || !Object.keys(old.records).length) return;
+    const b = builder();
+    for (const [key, r] of Object.entries(old.records)) b.put(key, r);
+    await b.save(old.files || [], old.updated);
+  }
+
+  // Import helper: grows columns as plain arrays, then saves them as typed arrays.
+  function builder() {
+    const cols = Object.fromEntries(Object.keys(COLS).map((k) => [k, Array.from(C[k])]));
+    const dict = structuredClone(C.dict);
+    const idx = Object.fromEntries(Object.entries(dict).map(([k, arr]) => [k, new Map(arr.map((v, i) => [v, i]))]));
+    const intern = (k, v) => { let i = idx[k].get(v); if (i === undefined) { i = dict[k].length; dict[k].push(v); idx[k].set(v, i); } return i; };
+    let keys = null, keyIdx = null;
+    const ensureKeys = async () => {
+      if (keys) return;
+      keys = (await idbGet('store2-keys')) || [];
+      keyIdx = new Map(keys.map((k, i) => [k, i]));
+    };
+    let added = 0;
+    return {
+      ensureKeys,
+      get added() { return added; },
+      // r: [contract, locality, postcode, price, area|null, zone, nature, purpose, strata, street, downloaded, dealing, house]
+      put(key, r) {
+        if (!keyIdx) { keys = keys || []; keyIdx = keyIdx || new Map(); }
+        const dl = Number(String(r[10] || '').replace(/\D/g, '').slice(0, 12)) || 0;
+        let i = keyIdx.get(key);
+        if (i !== undefined && dl < cols.dl[i]) return; // older copy of a sale we have
+        if (i === undefined) { i = cols.d.length; keyIdx.set(key, i); keys.push(key); added++; }
+        cols.d[i] = r[0]; cols.loc[i] = intern('loc', `${r[1]}|${r[2]}`); cols.price[i] = r[3]; cols.area[i] = r[4] == null ? NaN : r[4];
+        cols.zone[i] = intern('zone', r[5] || ''); cols.nature[i] = r[6] ? r[6].charCodeAt(0) : 0; cols.purpose[i] = intern('purpose', r[7] || '');
+        cols.strata[i] = r[8] ? 1 : 0; cols.street[i] = intern('street', r[9] || ''); cols.dl[i] = dl;
+        cols.dealing[i] = r[11] ? intern('dealing', r[11]) : 0; cols.house[i] = intern('house', r[12] || '');
+      },
+      async save(files, updated) {
+        const store = { v: 2, n: cols.d.length, dict, ...Object.fromEntries(Object.entries(COLS).map(([k, T]) => [k, T.from(cols[k])])) };
+        await idbSet('store2', store);
+        await idbSet('store2-keys', keys || []);
+        FILES = { files, updated };
+        await idbSet('store2-files', FILES);
+        C = store;
+      },
+    };
+  }
+
+  const salesCache = new Map();
+  function salesFor(v) {
+    if (!N) return [];
+    const key = JSON.stringify([v.area, v.locs, v.types, v.min, v.max, v.shape]);
+    const hit = salesCache.get(key);
+    if (hit) return hit; // shared, newest first: callers must not modify it
+    const area = areaOf(v.area);
+    const locSet = v.locs && v.locs.length ? new Set(v.locs) : null;
+    const locOk = DER.locName.map((name, li) => areaHas(area, DER.locPc[li]) && (!locSet || locSet.has(name)));
+    const typeOk = TYPE_IDS.map((t) => !v.types || !v.types.length || v.types.includes(t));
+    const shape = v.shape || null;
+    // a drawn part of town only uses house positions there; suburb centres are fine for big areas
+    const fine = shape && (shape.type === 'circle' ? shape.r <= 3000 : polyAreaKm2(shape.pts) <= 30);
+    const min = v.min || 0, max = v.max || Infinity;
+    const out = [];
+    for (let i = 0; i < N; i++) {
+      if (!DER.keep[i] || !locOk[C.loc[i]] || !typeOk[DER.type[i]]) continue;
+      const p = C.price[i];
+      if (p < min || p > max) continue;
+      if (shape) {
+        const lvl = DER.level[i];
+        if (!lvl || (fine && lvl === 1 && DER.houseRegion[C.loc[i]])) continue;
+        if (!inShape(shape, DER.lat[i], DER.lon[i])) continue;
+      }
+      out.push(i);
+    }
+    out.sort((a, b) => C.d[b] - C.d[a]);
+    const rows = out.map((i) => new Row(i));
+    if (salesCache.size > 30) salesCache.clear();
+    salesCache.set(key, rows);
+    return rows;
   }
 
   // ---------- map positions (G-NAF addresses, built on GitHub into data/geo.json) ----------
@@ -193,27 +327,60 @@
     // common abbreviations in the sales records that the address file spells differently
     const extra = { AVE: 'AVENUE', AV: 'AVENUE', CRES: 'CRESCENT', CR: 'CRESCENT', CCT: 'CIRCUIT', HWY: 'HIGHWAY', TCE: 'TERRACE', BVD: 'BOULEVARD', BLVD: 'BOULEVARD',
       ESP: 'ESPLANADE', GR: 'GROVE', GRV: 'GROVE', PKWY: 'PARKWAY', PWY: 'PARKWAY', CL: 'CLOSE', CT: 'COURT', DR: 'DRIVE', PL: 'PLACE', RD: 'ROAD', ST: 'STREET', LN: 'LANE', SQ: 'SQUARE', WY: 'WAY', RDGE: 'RIDGE', CTR: 'CENTRE' };
-    GEO = { types: { ...extra, ...(json.types || {}) }, streets: json.streets, byName, scale: json.scale || 1e5 };
+    GEO = { types: { ...extra, ...(json.types || {}) }, streets: json.streets, byName, scale: json.scale || 1e5,
+      postcodes: new Set(json.postcodes || ['2469', '2470', '2471', '2472', '2473', '2474', '2475', '2476', '2477', '2478', '2479', '2480']) };
   }
-  function placeSale(s) {
-    s.lat = s.lon = null; s.approx = false;
-    if (!GEO || !s.street) return;
-    const num = parseInt((String(s.house).match(/\d+/) || [])[0], 10);
-    if (!num) return;
-    const toks = s.street.trim().split(/\s+/);
-    let name = s.street.trim(), typ = '';
+  let SUBURBS = null; // 'LOCALITY|POSTCODE' → [lat, lon]
+  function loadSuburbs(json) {
+    const pts = json.suburbs || {}, byName = new Map();
+    for (const [k, p] of Object.entries(pts)) { // name-only lookup when the postcode differs: pick the biggest
+      const name = k.slice(0, k.lastIndexOf('|'));
+      const cur = byName.get(name);
+      if (!cur || (p[2] || 0) > (cur[2] || 0)) byName.set(name, p);
+    }
+    SUBURBS = { pts, byName, scale: json.scale || 1e5 };
+  }
+  function houseSpot(street, houseNo, loc) {
+    if (!GEO || !street) return null;
+    const num = parseInt((String(houseNo).match(/\d+/) || [])[0], 10);
+    if (!num) return null;
+    const toks = street.trim().split(/\s+/);
+    let name = street.trim(), typ = '';
     if (toks.length > 1 && GEO.types[toks[toks.length - 1]]) { typ = GEO.types[toks.pop()]; name = toks.join(' '); }
-    let arr = GEO.streets[`${s.loc}|${name}|${typ}`];
-    if (!arr) { const k = GEO.byName.get(`${s.loc}|${name}`) || GEO.byName.get(`${s.loc}|${s.street.trim()}`); if (k) arr = GEO.streets[k]; }
-    if (!arr) return;
+    let arr = GEO.streets[`${loc}|${name}|${typ}`];
+    if (!arr) { const k = GEO.byName.get(`${loc}|${name}`) || GEO.byName.get(`${loc}|${street.trim()}`); if (k) arr = GEO.streets[k]; }
+    if (!arr) return null;
     // exact number, else the nearest number on the same side of the street
     let best = -1, bestDiff = Infinity;
     for (let i = 0; i < arr.length; i += 3) {
       const diff = Math.abs(arr[i] - num) + ((arr[i] - num) % 2 ? 0.5 : 0);
       if (diff < bestDiff) { bestDiff = diff; best = i; if (diff === 0) break; }
     }
-    if (best < 0 || bestDiff > 10) return;
-    s.lat = arr[best + 1] / GEO.scale; s.lon = arr[best + 2] / GEO.scale; s.approx = bestDiff > 0;
+    if (best < 0 || bestDiff > 10) return null;
+    return [arr[best + 1] / GEO.scale, arr[best + 2] / GEO.scale, bestDiff > 0 ? 1 : 0];
+  }
+  // House positions where we have them (Northern Rivers, Newcastle); suburb centres everywhere else.
+  function placeAll() {
+    const nl = DER.locName.length;
+    const houseRegion = new Uint8Array(nl), subLat = new Float64Array(nl).fill(NaN), subLon = new Float64Array(nl).fill(NaN);
+    for (let li = 0; li < nl; li++) {
+      houseRegion[li] = GEO && GEO.postcodes.has(DER.locPc[li]) ? 1 : 0;
+      const p = SUBURBS && (SUBURBS.pts[`${DER.locName[li]}|${DER.locPc[li]}`] || SUBURBS.byName.get(DER.locName[li]));
+      if (p) { subLat[li] = p[0] / SUBURBS.scale; subLon[li] = p[1] / SUBURBS.scale; }
+    }
+    DER.houseRegion = houseRegion;
+    const spotCache = new Map();
+    for (let i = 0; i < N; i++) {
+      if (!DER.keep[i]) continue;
+      const li = C.loc[i];
+      if (houseRegion[li]) {
+        const k = `${li}|${C.street[i]}|${C.house[i]}`;
+        let sp = spotCache.get(k);
+        if (sp === undefined) { sp = houseSpot(C.dict.street[C.street[i]], C.dict.house[C.house[i]], DER.locName[li]); spotCache.set(k, sp); }
+        if (sp) { DER.lat[i] = sp[0]; DER.lon[i] = sp[1]; DER.level[i] = 2; DER.approx[i] = sp[2]; continue; }
+      }
+      if (!Number.isNaN(subLat[li])) { DER.lat[i] = subLat[li]; DER.lon[i] = subLon[li]; DER.level[i] = 1; }
+    }
   }
   const toRad = (d) => d * Math.PI / 180;
   const distM = (a, b, c, d) => { const R = 6371e3, x = toRad(c - a), y = toRad(d - b); const h = Math.sin(x / 2) ** 2 + Math.cos(toRad(a)) * Math.cos(toRad(c)) * Math.sin(y / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
@@ -255,7 +422,6 @@
   }
 
   // ---------- reading NSW Valuer General zip files on the phone ----------
-  const POSTCODES = new Set(['2469', '2470', '2471', '2472', '2473', '2474', '2475', '2476', '2477', '2478', '2479', '2480']);
   const VG_BASE = 'https://www.valuergeneral.nsw.gov.au/__psi';
 
   function* zipEntries(buf) {
@@ -301,25 +467,21 @@
     return new Uint8Array(await new Response(stream).arrayBuffer());
   }
 
-  // 'B' records, post-2001 Valuer General format (semicolon separated)
-  function parseDat(text, out) {
+  // 'B' records, post-2001 Valuer General format (semicolon separated). All of NSW is kept.
+  function parseDat(text, b) {
     let n = 0;
     for (const line of text.split(/\r?\n/)) {
       if (!line.startsWith('B;')) continue;
       const f = line.split(';');
       if (f.length < 24) continue;
-      const pc = f[10].trim();
-      if (!POSTCODES.has(pc)) continue;
       const price = parseInt(f[15], 10);
       const contract = f[13].trim() || f[14].trim();
       if (!price || !/^\d{8}$/.test(contract)) continue;
       const a = parseFloat(f[11]);
       const area = isFinite(a) ? Math.round(a * (f[12].trim().toUpperCase() === 'H' ? 10000 : 1)) : null;
-      const key = `${f[1].trim()}|${f[2].trim()}|${f[3].trim()}|${contract}`;
-      const rec = [+contract, f[9].trim().toUpperCase(), pc, price, area, f[16].trim().toUpperCase(), f[17].trim().toUpperCase().slice(0, 1),
-        f[18].trim().toUpperCase(), f[19].trim() ? 1 : 0, f[8].trim().toUpperCase(), f[4].trim(), f[23].trim(), f[7].trim()];
-      const old = out[key];
-      if (!old || rec[10] >= old[10]) { out[key] = rec; n++; }
+      b.put(`${f[1].trim()}|${f[2].trim()}|${f[3].trim()}|${contract}`, [+contract, f[9].trim().toUpperCase(), f[10].trim(), price, area, f[16].trim().toUpperCase(),
+        f[17].trim().toUpperCase().slice(0, 1), f[18].trim().toUpperCase(), f[19].trim() ? 1 : 0, f[8].trim().toUpperCase(), f[4].trim(), f[23].trim(), f[7].trim()]);
+      n++;
     }
     return n;
   }
@@ -331,17 +493,19 @@
     if (!files.length) return;
     if (typeof DecompressionStream === 'undefined') { toast('This phone’s browser is too old to unzip files (needs iOS 16.4 or later).'); return; }
     const latin1 = new TextDecoder('iso-8859-1');
-    const done = new Set(LOCAL.files);
-    let added = 0, ok = 0;
+    const done = new Set(FILES.files);
+    const b = builder();
+    await b.ensureKeys();
+    let read = 0, ok = 0;
     const bad = [];
-    const walk = async (buf, label) => {
+    const walk = async (buf) => {
       for (const entry of zipEntries(buf)) {
         const lower = entry.name.toLowerCase();
         if (lower.endsWith('.zip')) {
-          await walk(await inflate(entry), entry.name);
+          await walk(await inflate(entry));
           const id = fileId(entry.name); if (id) done.add(id);
         } else if (lower.endsWith('.dat')) {
-          added += parseDat(latin1.decode(await inflate(entry)), LOCAL.records);
+          read += parseDat(latin1.decode(await inflate(entry)), b);
         }
       }
     };
@@ -349,16 +513,15 @@
       const f = files[i];
       toast(`Reading ${f.name} (${i + 1} of ${files.length})…`);
       try {
-        await walk(new Uint8Array(await f.arrayBuffer()), f.name);
+        await walk(new Uint8Array(await f.arrayBuffer()));
         const id = fileId(f.name); if (id) done.add(id);
         ok++;
       } catch (e) { bad.push(f.name); console.warn(f.name, e); }
     }
-    LOCAL.files = [...done].sort();
-    LOCAL.updated = new Date().toISOString();
-    try { await idbSet('local-sales', LOCAL); } catch { toast('Could not save the imported sales on this phone.'); return; }
-    rebuildSales(); render(); renderImportStatus();
-    toast(`Imported ${ok} file${ok === 1 ? '' : 's'}: ${added.toLocaleString('en-AU')} Northern Rivers sales${bad.length ? ` · ${bad.length} skipped (not a sales file — that week may not be published yet)` : ''}`);
+    toast('Saving…');
+    try { await b.save([...done].sort(), new Date().toISOString()); } catch (e) { console.warn(e); toast('Could not save the imported sales on this phone (storage full?).'); return; }
+    derive(); render(); renderImportStatus();
+    toast(`Imported ${ok} file${ok === 1 ? '' : 's'}: ${read.toLocaleString('en-AU')} NSW sales read, ${b.added.toLocaleString('en-AU')} new${bad.length ? ` · ${bad.length} skipped (not a sales file — that week may not be published yet)` : ''}`);
   }
 
   const mondaysOf = (year, until) => {
@@ -370,7 +533,7 @@
   };
   // every file not yet imported: yearly files for past years, weekly files for this year
   function missingFiles() {
-    const have = new Set(LOCAL.files);
+    const have = new Set(FILES.files);
     const now = new Date();
     const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
     const year = today.getUTCFullYear();
@@ -387,9 +550,9 @@
 
   function renderImportStatus() {
     const box = $('#importStatus'); if (!box) return;
-    const n = Object.keys(LOCAL.records).length;
-    const weeks = LOCAL.files.filter((f) => f.startsWith('weekly/')).sort();
-    const years = LOCAL.files.filter((f) => f.startsWith('yearly/')).map((f) => f.slice(7));
+    const n = N;
+    const weeks = FILES.files.filter((f) => f.startsWith('weekly/')).sort();
+    const years = FILES.files.filter((f) => f.startsWith('yearly/')).map((f) => f.slice(7));
     const missing = missingFiles();
     box.textContent = n
       ? `${n.toLocaleString('en-AU')} sales imported on this phone${years.length ? ` · years ${years.join(', ')}` : ''}${weeks.length ? ` · latest week ${fmtDate(weeks[weeks.length - 1].slice(7))}` : ''}. ${missing.length ? `${missing.length} file${missing.length === 1 ? '' : 's'} still to download.` : 'Up to date.'}`
@@ -400,21 +563,17 @@
     if (latest) { link.href = latest; link.textContent = `Download week of ${fmtDate(latest.match(/(\d{8})\.zip/)[1])}`; }
   }
 
-  const matcher = (v) => {
-    const area = areaOf(v.area);
-    const locs = v.locs && v.locs.length ? new Set(v.locs) : null;
-    const types = v.types && v.types.length ? new Set(v.types) : null;
-    const shape = v.shape && !v.ignoreShape ? v.shape : null;
-    return (s) => (!area.pcs || area.pcs.includes(s.pc)) && (!locs || locs.has(s.loc)) && (!types || types.has(s.type)) &&
-      (!v.min || s.price >= v.min) && (!v.max || s.price <= v.max) &&
-      (!shape || (s.lat != null && inShape(shape, s.lat, s.lon)));
-  };
-  const salesFor = (v) => SALES.filter(matcher(v));
-
   // monthly stats, optionally pooled over a rolling window of months
+  const monthlyCache = new WeakMap();
   function monthly(list, smooth) {
+    let memo = monthlyCache.get(list);
+    if (!memo) monthlyCache.set(list, (memo = {}));
+    if (!memo[smooth]) memo[smooth] = monthlyCalc(list, smooth);
+    return memo[smooth];
+  }
+  function monthlyCalc(list, smooth) {
     const by = new Map();
-    for (const s of list) { if (!by.has(s.m)) by.set(s.m, []); by.get(s.m).push(s.price); }
+    for (const s of list) { const m = s.m; let a = by.get(m); if (!a) by.set(m, (a = [])); a.push(s.price); }
     if (!by.size) return [];
     const ms = [...by.keys()].sort();
     const rows = [];
@@ -439,7 +598,7 @@
     const h = $('#lastUpdated');
     if (!DATA_INFO) { h.textContent = 'No sold-price data imported yet'; return; }
     const g = new Date(DATA_INFO.generated);
-    h.textContent = `${SALES.length.toLocaleString('en-AU')} sales · latest ${fmtDate(DATA_INFO.latest)} · updated ${g.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`;
+    h.textContent = `${N.toLocaleString('en-AU')} sales · latest ${fmtDate(DATA_INFO.latest)} · updated ${g.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`;
   }
 
   function renderChips() {
@@ -505,7 +664,7 @@
 
   function renderCards() {
     const box = $('#statCards'); box.replaceChildren();
-    if (!SALES.length) {
+    if (!N) {
       box.className = 'cards compare';
       box.append(el('div', { class: 'card wide' }, el('div', { class: 'label' }, 'No sold prices yet'),
         el('div', { class: 'delta' }, 'Import the NSW Valuer General sales files your iPhone Shortcut downloads.'),
@@ -571,7 +730,7 @@
     const { series, start, end } = buildSeries();
     const nonEmpty = series.filter((s) => s.points.length);
     if (!nonEmpty.length) {
-      box.append(el('div', { class: 'empty' }, SALES.length ? 'Not enough sales match these filters to chart. Try a wider area, more property types or a bigger price range.' : 'No data to chart yet.'));
+      box.append(el('div', { class: 'empty' }, N ? 'Not enough sales match these filters to chart. Try a wider area, more property types or a bigger price range.' : 'No data to chart yet.'));
       return;
     }
     const W = box.clientWidth || 340, H = box.clientHeight || 240;
@@ -585,7 +744,7 @@
     const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Price trend chart' });
 
     const provStart = addMonths(thisMonth(), -PROVISIONAL_MONTHS);
-    const showProv = SALES.length && end >= provStart;
+    const showProv = N && end >= provStart;
     if (showProv) {
       const bx = Math.max(pad.l, x(provStart > start ? provStart : start) - step / 2);
       svg.append(svgEl('rect', { x: bx, y: pad.t, width: Math.max(0, W - pad.r - bx), height: H - pad.t - pad.b, fill: 'var(--grid)', opacity: 0.7 }));
@@ -670,9 +829,9 @@
     const box = $('#salesList'); box.replaceChildren();
     const panel = $('#salesPanel');
     const v = currentView();
-    if (!v || !SALES.length) { panel.hidden = true; return; }
+    if (!v || !N) { panel.hidden = true; return; }
     panel.hidden = false;
-    const list = salesFor(v).sort((a, b) => b.d - a.d);
+    const list = salesFor(v); // newest first
     $('#salesTitle').textContent = `Sales matching this search (${list.length.toLocaleString('en-AU')})`;
     for (const s of list.slice(0, salesShown)) {
       box.append(el('li', {},
@@ -700,20 +859,39 @@
   }
   // colour dots by price: lower third / middle / upper third of the sales shown
   function priceBands(list) {
-    const p = list.map((s) => s.price).sort((a, b) => a - b);
+    const p = Float64Array.from(list, (s) => C.price[s.i]).sort();
     return p.length ? [p[Math.floor(p.length / 3)], p[Math.floor((2 * p.length) / 3)]] : [0, 0];
   }
   function addDots(layer, list, opts = {}) {
     const [t1, t2] = priceBands(list);
     const cols = [cssVar('--s2'), cssVar('--s3'), cssVar('--s5')];
-    const shown = list.filter((s) => s.lat != null).sort((a, b) => b.d - a.d).slice(0, MAX_DOTS);
+    // suburb-level sales: one bubble per suburb (size = number of sales, colour = median)
+    const subs = new Map();
+    for (const s of list) {
+      const i = s.i;
+      if (DER.level[i] !== 1) continue;
+      const k = C.loc[i];
+      let g = subs.get(k);
+      if (!g) { g = { lat: DER.lat[i], lon: DER.lon[i], loc: DER.locName[k], prices: [] }; subs.set(k, g); }
+      g.prices.push(C.price[i]);
+    }
+    for (const g of subs.values()) {
+      const med = median(g.prices);
+      const c = med <= t1 ? cols[0] : med <= t2 ? cols[1] : cols[2];
+      const mk = L.circleMarker([g.lat, g.lon], { radius: Math.min(22, 6 + Math.sqrt(g.prices.length) * 1.6), weight: 1.5, color: '#ffffff', fillColor: c,
+        fillOpacity: opts.faint ? 0.35 : 0.75, interactive: !opts.faint });
+      if (!opts.faint) mk.bindPopup(() => `<b>${esc(titleCase(g.loc))}</b><br>${g.prices.length.toLocaleString('en-AU')} sale${g.prices.length === 1 ? '' : 's'} · median ${fmtMoney(med)}<br><span style="opacity:.7">Shown at the suburb centre</span>`);
+      mk.addTo(layer);
+    }
+    const shown = [];
+    for (const s of list) { if (s.level === 2) { shown.push(s); if (shown.length >= MAX_DOTS) break; } } // list is newest first
     for (const s of shown) {
       const c = s.price <= t1 ? cols[0] : s.price <= t2 ? cols[1] : cols[2];
       const mk = L.circleMarker([s.lat, s.lon], { radius: opts.small ? 4 : 5.5, weight: 1, color: '#ffffff', fillColor: c, fillOpacity: opts.faint ? 0.45 : 0.9, interactive: !opts.faint });
-      if (!opts.faint) mk.bindPopup(`<b>${fmtMoney(s.price)}</b> · ${fmtDate(s.d)}<br>${esc(s.house ? s.house + ' ' : '')}${esc(titleCase(s.street))}, ${esc(titleCase(s.loc))}<br><span style="opacity:.7">${esc(typeName(s.type))}${s.area ? ' · ' + fmtArea(s.area) : ''}${s.approx ? ' · position approximate' : ''}</span>`);
+      if (!opts.faint) mk.bindPopup(() => `<b>${fmtMoney(s.price)}</b> · ${fmtDate(s.d)}<br>${esc(s.house ? s.house + ' ' : '')}${esc(titleCase(s.street))}, ${esc(titleCase(s.loc))}<br><span style="opacity:.7">${esc(typeName(s.type))}${s.area ? ' · ' + fmtArea(s.area) : ''}${s.approx ? ' · position approximate' : ''}</span>`);
       mk.addTo(layer);
     }
-    return { shown: shown.length, bands: [t1, t2], cols };
+    return { shown: shown.length, suburbs: subs.size, bands: [t1, t2], cols };
   }
   function shapeLayer(shape) {
     const style = { color: cssVar('--accent'), weight: 2.5, dashArray: '6 5', fillOpacity: 0.08 };
@@ -721,17 +899,19 @@
     return shape.type === 'circle' ? L.circle(shape.c, { ...style, radius: shape.r }) : L.polygon(shape.pts, style);
   }
 
+  const boundsOf = (list) => { let a = 90, b = 180, c = -90, d = -180; for (const s of list) { const la = s.lat, lo = s.lon; if (la < a) a = la; if (la > c) c = la; if (lo < b) b = lo; if (lo > d) d = lo; } return L.latLngBounds([a, b], [c, d]); };
   let mainMap = null, mainLayer = null, lastFit = '';
   function renderMapPanel() {
     const panel = $('#mapPanel');
     const v = currentView();
-    if (!v || !SALES.length || typeof L === 'undefined') { panel.hidden = true; return; }
+    if (!v || !N || typeof L === 'undefined') { panel.hidden = true; return; }
     panel.hidden = false;
     if (!mainMap) { mainMap = makeMap($('#map')); mainLayer = L.layerGroup().addTo(mainMap); }
     mainLayer.clearLayers();
     const list = salesFor(v);
-    const placed = list.filter((s) => s.lat != null);
+    const placed = list.filter((s) => DER.level[s.i] > 0);
     const res = addDots(mainLayer, list);
+    let houseN = 0; for (const s of list) if (DER.level[s.i] === 2) houseN++;
     const sl = shapeLayer(v.shape); if (sl) sl.addTo(mainLayer);
     const leg = $('#mapLegend'); leg.replaceChildren();
     if (placed.length) {
@@ -741,14 +921,14 @@
     $('#mapNote').textContent = !GEO
       ? 'House positions are still being prepared. They appear here once the address file has been built.'
       : !list.length ? 'No sales match this search.'
-      : `${placed.length.toLocaleString('en-AU')} of ${list.length.toLocaleString('en-AU')} sales placed on the map${res.shown < placed.length ? ` (latest ${res.shown.toLocaleString('en-AU')} shown)` : ''}. Tap a dot for details.`;
+      : `${list.length.toLocaleString('en-AU')} sales: ${res.shown.toLocaleString('en-AU')} shown at their house${res.shown < houseN ? ' (latest only)' : ''}${res.suburbs ? `, the rest grouped into ${res.suburbs.toLocaleString('en-AU')} suburb bubble${res.suburbs === 1 ? '' : 's'}` : ''}${placed.length < list.length ? ` · ${(list.length - placed.length).toLocaleString('en-AU')} couldn't be placed` : ''}. Tap a dot for details.`;
     setTimeout(() => {
       mainMap.invalidateSize();
       const key = JSON.stringify([v.id, v.area, v.locs, v.types, v.min, v.max, v.shape]);
       if (key === lastFit) return;
       lastFit = key;
       if (sl) mainMap.fitBounds(sl.getBounds(), { padding: [16, 16] });
-      else if (placed.length) mainMap.fitBounds(L.latLngBounds(placed.map((s) => [s.lat, s.lon])), { padding: [16, 16], maxZoom: 16 });
+      else if (placed.length) mainMap.fitBounds(boundsOf(placed), { padding: [16, 16], maxZoom: 16 });
       else mainMap.setView(NR_CENTER, 9);
     }, 0);
   }
@@ -778,14 +958,14 @@
       });
     }
     ctxLayer.clearLayers();
-    const context = SALES.filter(matcher({ ...editing, shape: null }));
+    const context = salesFor({ ...editing, shape: null });
     addDots(ctxLayer, context, { small: true, faint: true });
     setTimeout(() => {
       drawMap.invalidateSize();
       const sl = shapeLayer(sh);
       const placed = context.filter((s) => s.lat != null);
       if (sl) drawMap.fitBounds(sl.getBounds(), { padding: [30, 30] });
-      else if (placed.length) drawMap.fitBounds(L.latLngBounds(placed.map((s) => [s.lat, s.lon])), { padding: [20, 20], maxZoom: 15 });
+      else if (placed.length) drawMap.fitBounds(boundsOf(placed), { padding: [20, 20], maxZoom: 15 });
       else drawMap.setView(NR_CENTER, 9);
     }, 0);
     renderDrawTools();
@@ -847,13 +1027,16 @@
     editing = asNew ? { id: '', name: '', area: 'all', locs: [], types: ['house'], min: 0, max: 0, shape: null } : structuredClone(currentView());
     $('#filterTitle').textContent = asNew ? 'New search' : `Edit “${editing.name}”`;
     $('#fName').value = editing.name;
-    const areaSel = $('#fArea'); areaSel.replaceChildren(...AREAS.map((a) => el('option', { value: a.id }, a.name))); areaSel.value = editing.area;
+    const areaSel = $('#fArea'); areaSel.replaceChildren();
+    for (const g of [...new Set(AREAS.map((a) => a.group))]) areaSel.append(el('optgroup', { label: g }, ...AREAS.filter((a) => a.group === g).map((a) => el('option', { value: a.id }, a.name))));
+    areaSel.value = editing.area;
     for (const [id, anyLabel, val] of [['#fMin', 'No min', editing.min], ['#fMax', 'No max', editing.max]]) {
       const sel = $(id);
       const steps = val && !PRICE_STEPS.includes(val) ? [...PRICE_STEPS, val].sort((a, b) => a - b) : PRICE_STEPS;
       sel.replaceChildren(el('option', { value: 0 }, anyLabel), ...steps.map((p) => el('option', { value: p }, fmtShort(p))));
       sel.value = String(val || 0);
     }
+    $('#fLocSearch').value = '';
     renderTypeChecks(); renderLocChecks(); renderShapeField();
     $('#deleteView').hidden = asNew || views.length <= 1;
     $('#saveAsNew').hidden = asNew;
@@ -874,42 +1057,47 @@
 
   function renderLocChecks() {
     const area = areaOf(editing.area);
-    const locs = [...LOC_COUNTS.entries()].filter(([, c]) => !area.pcs || area.pcs.includes(c.pc)).sort((a, b) => b[1].n - a[1].n);
+    const locs = [...LOC_COUNTS.entries()].filter(([, c]) => areaHas(area, c.pc)).sort((a, b) => b[1].n - a[1].n);
     for (const l of editing.locs) if (!LOC_COUNTS.has(l)) locs.push([l, { n: 0 }]); // chosen but no sales yet
     const box = $('#fLocs'); box.replaceChildren();
-    $('#fLocSearch').value = '';
-    if (!locs.length) box.append(el('p', { class: 'hint' }, 'Locations appear here once sales data has downloaded.'));
-    for (const [name, c] of locs) {
+    const q = $('#fLocSearch').value.trim().toLowerCase();
+    if (!locs.length) box.append(el('p', { class: 'hint' }, 'Locations appear here once sales data has been imported.'));
+    // chosen ones first, then the busiest; search narrows the list
+    const chosen = new Set(editing.locs);
+    const shownLocs = locs.filter(([name]) => !q || name.toLowerCase().includes(q))
+      .sort((a, b) => (chosen.has(b[0]) - chosen.has(a[0])) || (b[1].n - a[1].n));
+    const LIMIT = 150;
+    for (const [name, c] of shownLocs.slice(0, LIMIT)) {
       box.append(el('label', { class: 'check', 'data-name': name.toLowerCase() },
         el('input', { type: 'checkbox', value: name, checked: editing.locs.includes(name), onchange: (e) => {
           editing.locs = e.target.checked ? [...editing.locs, name] : editing.locs.filter((x) => x !== name);
           updateCount();
         } }), el('span', { class: 'grow' }, titleCase(name)), el('span', { class: 'count' }, c.n)));
     }
+    if (shownLocs.length > LIMIT) box.append(el('p', { class: 'hint' }, `${(shownLocs.length - LIMIT).toLocaleString('en-AU')} more — type above to find a suburb.`));
     updateCount();
   }
 
   function updateCount() {
-    $('#fCount').textContent = SALES.length ? `${salesFor(editing).length.toLocaleString('en-AU')} matching sales` : '';
+    $('#fCount').textContent = N ? `${salesFor(editing).length.toLocaleString('en-AU')} matching sales` : '';
     if (editing.shape && GEO) {
-      const all = SALES.filter(matcher({ ...editing, shape: null }));
-      const unplaced = all.filter((s) => s.lat == null).length;
-      $('#fShapeNote').textContent = unplaced ? `${unplaced.toLocaleString('en-AU')} of ${all.length.toLocaleString('en-AU')} sales in these locations couldn't be placed on the map (e.g. lot-only rural addresses), so they're left out.` : '';
+      const all = salesFor({ ...editing, shape: null });
+      const unplaced = all.filter((s) => s.level !== 2 && GEO && GEO.postcodes.has(s.pc)).length;
+      $('#fShapeNote').textContent = unplaced ? `${unplaced.toLocaleString('en-AU')} of ${all.length.toLocaleString('en-AU')} sales in these locations in house-level areas couldn't be matched to a house (e.g. lot-only rural addresses), so small drawn areas leave them out.` : '';
     } else $('#fShapeNote').textContent = '';
     $('#fLocLabel').textContent = editing.locs.length ? `Locations · ${editing.locs.length} selected` : 'Locations · all in area';
   }
 
   $('#fArea').addEventListener('change', (e) => {
+    $('#fLocSearch').value = '';
     editing.area = e.target.value;
     const area = areaOf(editing.area);
-    editing.locs = editing.locs.filter((l) => { const c = LOC_COUNTS.get(l); return !c || !area.pcs || area.pcs.includes(c.pc); });
+    editing.locs = editing.locs.filter((l) => { const c = LOC_COUNTS.get(l); return !c || areaHas(area, c.pc); });
     renderLocChecks();
   });
-  $('#fLocSearch').addEventListener('input', (e) => {
-    const q = e.target.value.trim().toLowerCase();
-    for (const lab of $('#fLocs').querySelectorAll('label.check')) lab.hidden = !!q && !lab.dataset.name.includes(q);
-  });
-  $('#fLocAll').addEventListener('click', () => { editing.locs = []; renderLocChecks(); });
+  let locSearchT;
+  $('#fLocSearch').addEventListener('input', () => { clearTimeout(locSearchT); locSearchT = setTimeout(renderLocChecks, 150); });
+  $('#fLocAll').addEventListener('click', () => { editing.locs = []; $('#fLocSearch').value = ''; renderLocChecks(); });
   $('#fMin').addEventListener('change', (e) => { editing.min = +e.target.value; updateCount(); });
   $('#fMax').addEventListener('change', (e) => { editing.max = +e.target.value; updateCount(); });
   $('#cancelFilters').addEventListener('click', () => fDlg.close());
@@ -998,11 +1186,11 @@
     catch { const ta = $('#copyFallback'); ta.hidden = false; ta.value = text; ta.select(); toast('Select all and copy the links below'); }
   });
   $('#clearImported').addEventListener('click', async () => {
-    if (!Object.keys(LOCAL.records).length) return toast('No imported sales to delete');
+    if (!N) return toast('No imported sales to delete');
     if (!confirm('Delete all sales imported on this phone? You can import the files again later.')) return;
-    LOCAL = { records: {}, files: [], updated: null };
-    try { await idbSet('local-sales', LOCAL); } catch { /* ignore */ }
-    rebuildSales(); render(); renderImportStatus(); toast('Imported sales deleted');
+    C = emptyStore(); FILES = { files: [], updated: null };
+    try { await idbSet('store2', C); await idbSet('store2-keys', []); await idbSet('store2-files', FILES); } catch { /* ignore */ }
+    derive(); render(); renderImportStatus(); toast('Imported sales deleted');
   });
   $('#closeMenu').addEventListener('click', () => menu.close());
   function download(name, text, type) {
@@ -1017,7 +1205,7 @@
   $('#exportSales').addEventListener('click', () => {
     const v = currentView();
     if (!v) return toast('Pick one of your searches first');
-    const rows = salesFor(v).sort((a, b) => b.d - a.d);
+    const rows = salesFor(v);
     const lines = ['contract_date,price,street,locality,postcode,type,land_m2,zone',
       ...rows.map((s) => [String(s.d).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'), s.price, titleCase(s.street), titleCase(s.loc), s.pc, typeName(s.type), s.area ?? '', s.zone].map(csvEsc).join(','))];
     download(`${v.name.replace(/[^\w]+/g, '-')}-sales-${stamp()}.csv`, lines.join('\n'), 'text/csv');

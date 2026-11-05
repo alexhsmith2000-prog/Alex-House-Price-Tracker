@@ -25,7 +25,20 @@ from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "data", "geo.json")
-POSTCODES = set(os.environ.get("POSTCODES", "2469,2470,2471,2472,2473,2474,2475,2476,2477,2478,2479,2480").split(","))
+OUT_SUBURBS = os.path.join(ROOT, "data", "suburbs.json")
+
+
+def expand(spec):
+    out = set()
+    for part in spec.split(","):
+        lo, _, hi = part.partition("-")
+        out.update(str(n) for n in range(int(lo), int(hi or lo) + 1))
+    return out
+
+
+# House-level positions: Northern Rivers (2469-2480) and Newcastle & Lake Macquarie.
+# Everywhere else in NSW gets one position per suburb (data/suburbs.json).
+POSTCODES = expand(os.environ.get("HOUSE_POSTCODES", "2469-2480,2264-2267,2278,2280-2308"))
 CKAN = "https://data.gov.au/data/api/3/action/package_show?id=19432f89-dc3a-4ef3-b943-5326ef1dbecc"
 UA = "northern-rivers-price-tracker/1.0 (+https://github.com)"
 WORK = os.environ.get("RUNNER_TEMP", "/tmp")
@@ -99,17 +112,25 @@ def main():
     download(find_zip_url(), zpath)
     z = zipfile.ZipFile(zpath)
 
-    # 1. NSW addresses in our postcodes (principal, not retired)
+    # 1. NSW addresses (principal, not retired). House-level detail for our postcodes;
+    #    for the rest of the state just (suburb, postcode), used for suburb centres.
     addr = {}
+    loc_ids, every = {}, {}
     for r in rows(z, "NSW_ADDRESS_DETAIL_psv.psv"):
-        if r["POSTCODE"] not in POSTCODES or r.get("DATE_RETIRED") or r.get("ALIAS_PRINCIPAL", "P") != "P":
+        if r.get("DATE_RETIRED") or r.get("ALIAS_PRINCIPAL", "P") != "P":
+            continue
+        pc = r["POSTCODE"]
+        lid = loc_ids.setdefault(r["LOCALITY_PID"], len(loc_ids))
+        if pc and pc.isdigit():
+            every[r["ADDRESS_DETAIL_PID"]] = (lid, int(pc))
+        if pc not in POSTCODES:
             continue
         try:
             num = int(r["NUMBER_FIRST"])
         except (TypeError, ValueError):
             continue
         addr[r["ADDRESS_DETAIL_PID"]] = (r["STREET_LOCALITY_PID"], r["LOCALITY_PID"], num)
-    log(f"Addresses in postcodes: {len(addr)}")
+    log(f"NSW addresses: {len(every)}; with house-level detail: {len(addr)}")
 
     want_streets = {a[0] for a in addr.values()}
     want_locs = {a[1] for a in addr.values()}
@@ -117,10 +138,13 @@ def main():
     for r in rows(z, "NSW_STREET_LOCALITY_psv.psv"):
         if r["STREET_LOCALITY_PID"] in want_streets:
             streets[r["STREET_LOCALITY_PID"]] = (r["STREET_NAME"].upper().strip(), (r.get("STREET_TYPE_CODE") or "").upper().strip())
-    locs = {}
+    locs, loc_names = {}, {}
     for r in rows(z, "NSW_LOCALITY_psv.psv"):
+        name = r["LOCALITY_NAME"].upper().strip()
         if r["LOCALITY_PID"] in want_locs:
-            locs[r["LOCALITY_PID"]] = r["LOCALITY_NAME"].upper().strip()
+            locs[r["LOCALITY_PID"]] = name
+        if r["LOCALITY_PID"] in loc_ids:
+            loc_names[loc_ids[r["LOCALITY_PID"]]] = name
 
     # street type abbreviations, e.g. ST / STREET, RD / ROAD
     types = {}
@@ -134,22 +158,42 @@ def main():
 
     # 2. positions
     pts = defaultdict(dict)  # "LOCALITY|NAME|TYPE" -> {number: (lat, lon)}
+    centre = defaultdict(lambda: [0.0, 0.0, 0])  # (locality id, postcode) -> [sum lat, sum lon, count]
     for r in rows(z, "NSW_ADDRESS_DEFAULT_GEOCODE_psv.psv"):
-        a = addr.get(r["ADDRESS_DETAIL_PID"])
-        if not a or a[0] not in streets or a[1] not in locs:
-            continue
-        name, typ = streets[a[0]]
+        pid = r["ADDRESS_DETAIL_PID"]
         try:
             lat, lon = float(r["LATITUDE"]), float(r["LONGITUDE"])
         except (TypeError, ValueError):
             continue
+        e = every.get(pid)
+        if e:
+            c = centre[e]
+            c[0] += lat; c[1] += lon; c[2] += 1
+        a = addr.get(pid)
+        if not a or a[0] not in streets or a[1] not in locs:
+            continue
+        name, typ = streets[a[0]]
         key = f"{locs[a[1]]}|{name}|{typ}"
         pts[key].setdefault(a[2], (round(lat * 1e5), round(lon * 1e5)))
 
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # suburb centres: average position of each suburb's addresses (per postcode it spans)
+    suburbs = {}
+    for (lid, pc), (sl, so, n) in centre.items():
+        if lid in loc_names and n:
+            suburbs[f"{loc_names[lid]}|{pc}"] = [round(sl / n * 1e5), round(so / n * 1e5), n]
+    with open(OUT_SUBURBS, "w") as fh:
+        json.dump({"generated": generated, "source": "G-NAF, Geoscape Australia (open data, data.gov.au)", "scale": 1e5,
+                   "suburbs": dict(sorted(suburbs.items()))}, fh, separators=(",", ":"))
+    log(f"Wrote {OUT_SUBURBS}: {len(suburbs)} suburb/postcode centres, {os.path.getsize(OUT_SUBURBS) >> 10} KB")
+    if len(suburbs) < 3000:
+        sys.exit("ERROR: suspiciously few suburbs; the G-NAF format may have changed")
+
     out = {
-        "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated": generated,
         "source": "G-NAF, Geoscape Australia (open data, data.gov.au)",
         "scale": 1e5,
+        "postcodes": sorted(POSTCODES),
         "types": types,
         # each street: flat list [number, lat*1e5, lon*1e5, number, lat, lon, ...] sorted by number
         "streets": {k: [x for n in sorted(v) for x in (n, v[n][0], v[n][1])] for k, v in sorted(pts.items())},

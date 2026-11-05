@@ -19,43 +19,47 @@ Ballina** and the rest of the Northern Rivers.
 
 ## Where the sold prices come from
 
-`scripts/fetch_sales.py` downloads the **NSW Valuer General's bulk property sales information**. This is the
-official public record of every NSW sale (contract date, price, street, locality, zoning, land area). It keeps
-the Northern Rivers postcodes (2469–2480) from 2024 onwards and writes `data/sales.json`, which the app reads.
-
-Sales take about 4–8 weeks to appear in the records, so the last two months are marked as incomplete.
+The **NSW Valuer General's bulk property sales information** is the official public record of every NSW sale
+(contract date, price, street, locality, zoning, land area). The files are downloaded on the iPhone by
+Shortcuts and imported in the app, which keeps **all of NSW** (about 200,000 sales a year) in a compact form
+in the phone's storage. Sales take about 4–8 weeks to appear in the records, so the last two months are
+marked as incomplete.
 
 ### Updating the data (from your iPhone)
 
-The Valuer General's server refuses downloads from GitHub's servers, and a web app can't fetch
-files from another site in the background. So the files are downloaded by **iPhone Shortcuts**
-and then imported into the app:
+The Valuer General's server refuses downloads from GitHub's servers, and a web app can't fetch files from
+another site in the background. So **iPhone Shortcuts** download the files and the app imports them:
 
-1. A **"NR Prices weekly"** shortcut runs automatically every Tuesday morning. It downloads Monday's
-   sales file into Files › iCloud Drive › Shortcuts › NR Prices.
-2. A **"NR Prices catch-up"** shortcut downloads any list of files. The app's **⋯ → Copy links of files
-   still to download** button puts the right list on the clipboard. Use it the first time to build the
-   history (the 2024 and 2025 yearly files plus this year's weeks) and whenever you've missed some weeks.
-3. In the app, **⋯ → Import sales files**, then select the files in that folder. The app unzips them
-   on the phone, keeps only Northern Rivers sales and merges them. Importing a file twice does no harm.
+1. A **"NR Prices weekly"** shortcut runs every Tuesday morning and saves Monday's sales file into
+   Files › iCloud Drive › Shortcuts › NR Prices.
+2. A **"NR Prices catch-up"** shortcut downloads any list of files. **⋯ → Copy links of files still to
+   download** puts the right list on the clipboard (the 2024 and 2025 yearly files plus this year's weeks).
+3. **⋯ → Import sales files**, then select the files in that folder. Importing a file twice does no harm.
 
-Step-by-step instructions for building both shortcuts are in the app under
-**⋯ → Set up the iPhone Shortcuts**. Imported sales are stored on the phone (IndexedDB).
+Step-by-step instructions are in the app under **⋯ → Set up the iPhone Shortcuts**.
 
-On a computer you can instead run `python3 scripts/fetch_sales.py`, which writes `data/sales.json`.
-Pushing that file publishes it to everyone who uses the app, and the app merges it with anything
-imported on the phone.
+## Areas
+
+The Area list has the Northern Rivers towns plus NSW regions (Tweed & Byron, Mid North Coast, Newcastle &
+Lake Macquarie, Greater Sydney, Riverina, …) and **All of NSW**. Regions are groups of postcodes, so their
+edges are approximate; pick individual suburbs under **Locations** for precision.
 
 ## Map and parts of town
 
-Each sale is placed on the map by matching its street, house number and suburb against **G-NAF**, the free
-national address file (Geoscape Australia, open data on data.gov.au). `scripts/build_geo.py` runs on GitHub
-every quarter, when G-NAF is updated. It keeps the Northern Rivers addresses (about 65,000) and writes
-`data/geo.json` (about 1.5 MB).
+Sales are placed on the map using **G-NAF**, the free national address file (Geoscape Australia, open data on
+data.gov.au). `scripts/build_geo.py` runs on GitHub every quarter, when G-NAF is updated, and writes:
 
-In a search's **Filters**, use **Map area → Draw on map** to tap out the corners of part of town, or drop a pin
-and choose a distance. Only sales inside that area count. Sales that can't be placed (mostly lot-only rural
-addresses) are left out of map-area searches, and the filter screen says how many.
+- `data/geo.json`: **house-level** positions for the Northern Rivers (2469–2480) and **Newcastle & Lake
+  Macquarie** (2264–2267, 2278, 2280–2308). Each sale is matched on street, house number and suburb.
+- `data/suburbs.json`: one **suburb-level** position (the centre of its addresses) for every suburb in NSW.
+
+In house-level areas each sale is a dot at its house. Elsewhere, sales are grouped into one bubble per suburb.
+More areas can be made house-level by adding their postcodes to `HOUSE_POSTCODES` in the script (each region
+adds a few MB).
+
+In a search's **Filters**, use **Map area → Draw on map** to tap out the corners of an area, or drop a pin
+and choose a distance. Small areas (up to about 30 km² or a 3 km radius) only count sales placed at their
+house. Larger areas also count whole suburbs whose centre falls inside.
 
 Map images © OpenStreetMap contributors. The map library (Leaflet) is bundled in `vendor/`.
 
@@ -76,4 +80,4 @@ and a daily run uses about 1–2 minutes. The Valuer General data is free.
 
 `index.html`, `styles.css`, `app.js` make up the app (plain HTML/CSS/JS, no build step). `sw.js` and
 `manifest.webmanifest` provide offline use and home-screen install (bump `VERSION` in `sw.js` after changing
-app files). `scripts/fetch_sales.py` is a computer-side downloader (optional). `data/` holds the sales data.
+app files). `scripts/build_geo.py` builds the map positions on GitHub. `data/` holds the sales data.
