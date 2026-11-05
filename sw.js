@@ -1,6 +1,6 @@
 // Offline support. Always asks the server for the latest files (bypassing the browser's own
 // cache), and only falls back to the saved copies when offline. Bump VERSION with APP_VERSION.
-const VERSION = 'nr-prices-10';
+const VERSION = 'nr-prices-11';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css'];

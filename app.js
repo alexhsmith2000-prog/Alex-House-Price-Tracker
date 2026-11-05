@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '10'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '11'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -889,14 +889,21 @@
     for (const s of list.slice(0, salesShown)) {
       box.append(el('li', {},
         el('div', { class: 'srow' }, el('b', {}, fmtMoney(s.price)), el('span', { class: 'sdate' }, fmtDate(s.d))),
-        el('div', { class: 'sline' }, `${s.street ? titleCase(s.street) + ', ' : ''}${titleCase(s.loc)}`),
-        el('div', { class: 'smeta' }, [typeName(s.type), fmtArea(s.area), s.zone ? `zone ${s.zone}` : ''].filter(Boolean).join(' · '))));
+        el('div', { class: 'sline' }, `${s.street ? (s.house ? s.house + ' ' : '') + titleCase(s.street) + ', ' : ''}${titleCase(s.loc)}`),
+        el('div', { class: 'smeta' }, [typeName(s.type), fmtArea(s.area), s.zone ? `zone ${s.zone}` : ''].filter(Boolean).join(' · ')),
+        s.street ? el('a', { class: 'lookup', href: lookupUrl(s), target: '_blank', rel: 'noopener' }, 'Look up on property.com.au ↗') : null));
     }
     if (!list.length) box.append(el('li', { class: 'table-empty' }, 'No sales match these filters.'));
     const more = $('#moreSales');
     more.hidden = list.length <= salesShown;
     more.onclick = () => { salesShown += 50; renderSalesList(); };
   }
+
+  // property.com.au pages use internal ids, so search for the address on that site instead.
+  const lookupUrl = (s) => {
+    const addr = `${s.house ? s.house + ' ' : ''}${titleCase(s.street)} ${titleCase(s.loc)} NSW ${s.pc}`.replace(/\s+/g, ' ').trim();
+    return `https://www.google.com/search?q=${encodeURIComponent(`${addr} site:property.com.au`)}`;
+  };
 
   // ---------- maps (Leaflet, bundled in vendor/) ----------
   const NR_CENTER = [-28.83, 153.25];
@@ -941,7 +948,7 @@
     for (const s of shown) {
       const c = s.price <= t1 ? cols[0] : s.price <= t2 ? cols[1] : cols[2];
       const mk = L.circleMarker([s.lat, s.lon], { radius: opts.small ? 4 : 5.5, weight: 1, color: '#ffffff', fillColor: c, fillOpacity: opts.faint ? 0.45 : 0.9, interactive: !opts.faint });
-      if (!opts.faint) mk.bindPopup(() => `<b>${fmtMoney(s.price)}</b> · ${fmtDate(s.d)}<br>${esc(s.house ? s.house + ' ' : '')}${esc(titleCase(s.street))}, ${esc(titleCase(s.loc))}<br><span style="opacity:.7">${esc(typeName(s.type))}${s.area ? ' · ' + fmtArea(s.area) : ''}${s.approx ? ' · position approximate' : ''}</span>`);
+      if (!opts.faint) mk.bindPopup(() => `<b>${fmtMoney(s.price)}</b> · ${fmtDate(s.d)}<br>${esc(s.house ? s.house + ' ' : '')}${esc(titleCase(s.street))}, ${esc(titleCase(s.loc))}<br><span style="opacity:.7">${esc(typeName(s.type))}${s.area ? ' · ' + fmtArea(s.area) : ''}${s.approx ? ' · position approximate' : ''}</span>${s.street ? `<br><a href="${esc(lookupUrl(s))}" target="_blank" rel="noopener">Look up on property.com.au ↗</a>` : ''}`);
       mk.addTo(layer);
     }
     return { shown: shown.length, suburbs: subs.size, bands: [t1, t2], cols };
