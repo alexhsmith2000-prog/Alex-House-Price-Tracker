@@ -69,7 +69,9 @@ Lismore City Council publishes "Flood & Floor Levels" PDFs: for each listed addr
 1-in-100-year flood level (metres AHD). In the app, **⋯ → Import council flood & floor levels (PDF)** reads the
 table on the phone (pdf.js, bundled in `vendor/pdfjs/`) and keeps it on the phone only; nothing is published.
 Sales at a listed address then show "Floor X m above/below the 1-in-100 flood level", and searches get a
-**Flood** filter. Floor levels date from 1996 onwards and may be out of date.
+**Flood** filter. The 2022 and 2017 floods are estimated per home from their peaks at the Lismore gauge
+(about 14.37 m and 11.59 m AHD, against a gauge 1-in-100 level of 12.4 m) plus the home's own 1-in-100 level.
+Floor levels date from 1996 onwards and may be out of date.
 
 ## Put it on your phone
 

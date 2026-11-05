@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '14'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '15'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -361,6 +361,8 @@
         const fd = DER.flood[i];
         if (v.flood === 'unknown' ? !Number.isNaN(fd) || !DER.floodLoc[C.loc[i]] : Number.isNaN(fd)) continue;
         if ((v.flood === 'above' && fd < 0) || (v.flood === 'below' && fd >= 0) || (v.flood === 'below1' && fd >= -1)) continue;
+        if ((v.flood === 'below2022' && overEvent(fd, 2022) >= 0) || (v.flood === 'above2022' && overEvent(fd, 2022) < 0)) continue;
+        if ((v.flood === 'below2017' && overEvent(fd, 2017) >= 0) || (v.flood === 'only2022' && !(overEvent(fd, 2022) < 0 && overEvent(fd, 2017) >= 0))) continue;
       }
       if (shape) {
         const lvl = DER.level[i];
@@ -939,8 +941,18 @@
     { id: 'above', name: 'Floor above the 1-in-100 flood level', short: 'floor above 1-in-100 flood' },
     { id: 'below', name: 'Floor below the 1-in-100 flood level', short: 'floor below 1-in-100 flood' },
     { id: 'below1', name: 'Floor more than 1 m below it', short: 'floor >1 m below 1-in-100 flood' },
+    { id: 'below2022', name: 'Floor below the 2022 flood (estimated)', short: 'floor below 2022 flood (est.)' },
+    { id: 'above2022', name: 'Floor above the 2022 flood (estimated)', short: 'floor above 2022 flood (est.)' },
+    { id: 'below2017', name: 'Floor below the 2017 flood (estimated)', short: 'floor below 2017 flood (est.)' },
+    { id: 'only2022', name: 'Flooded in 2022 but not 2017 (estimated)', short: 'flooded 2022, not 2017 (est.)' },
     { id: 'unknown', name: 'Not in the council list (same suburbs)', short: 'not in council flood list' },
   ];
+  // Peak heights at the Lismore (Rowing Club) gauge, metres AHD; the gauge's 1-in-100 level is 12.4 m.
+  // A flood's height at a home is estimated as that home's own 1-in-100 level plus (peak - 12.4).
+  const GAUGE_1IN100 = 12.4;
+  const FLOOD_EVENTS = { 2022: 14.37, 2017: 11.59 };
+  // floor height above an event's estimated level at the home (negative = water over the floor)
+  const overEvent = (d100, year) => d100 - (FLOOD_EVENTS[year] - GAUGE_1IN100);
   const houseKey = (h) => String(h || '').toUpperCase().replace(/\s+/g, '');
   const leadNum = (h) => (String(h || '').match(/\d+/) || [''])[0];
   function matchFlood() {
@@ -967,7 +979,20 @@
     const m = Math.abs(fd).toFixed(1);
     return fd >= 0 ? `Floor ${m} m above the 1-in-100 flood level` : `Floor ${m} m below the 1-in-100 flood level`;
   }
-  const floodEl = (i) => { const t = floodText(i); return t ? el('div', { class: `flood ${DER.flood[i] >= 0 ? 'dry' : 'wet'}` }, t) : null; };
+  function eventText(i) {
+    const fd = DER && DER.flood ? DER.flood[i] : NaN;
+    if (Number.isNaN(fd)) return '';
+    return Object.keys(FLOOD_EVENTS).sort().reverse().map((y) => {
+      const o = overEvent(fd, +y);
+      return o < 0 ? `${y}: about ${Math.abs(o).toFixed(1)} m over the floor` : `${y}: floor about ${o.toFixed(1)} m above the water`;
+    }).join(' · ') + ' (est.)';
+  }
+  const floodEl = (i) => {
+    const t = floodText(i);
+    if (!t) return null;
+    return el('div', {}, el('div', { class: `flood ${DER.flood[i] >= 0 ? 'dry' : 'wet'}` }, t),
+      el('div', { class: `flood-ev ${overEvent(DER.flood[i], 2022) < 0 ? 'wet' : 'dry'}` }, eventText(i)));
+  };
 
   // Read the council's "Flood & Floor Levels" PDF tables with pdf.js (loaded only when needed).
   let pdfjsReady = null;
@@ -1195,7 +1220,7 @@
     for (const s of shown) {
       const c = s.price <= t1 ? cols[0] : s.price <= t2 ? cols[1] : cols[2];
       const mk = L.circleMarker([s.lat, s.lon], { radius: opts.small ? 4 : 5.5, weight: 1, color: '#ffffff', fillColor: c, fillOpacity: opts.faint ? 0.45 : 0.9, interactive: !opts.faint });
-      if (!opts.faint) mk.bindPopup(() => `<b>${fmtMoney(s.price)}</b> · ${fmtDate(s.d)}<br>${esc(s.house ? s.house + ' ' : '')}${esc(titleCase(s.street))}, ${esc(titleCase(s.loc))}<br><span style="opacity:.7">${esc(typeName(s.type))}${s.area ? ' · ' + fmtArea(s.area) : ''}${s.approx ? ' · position approximate' : ''}</span>${floodText(s.i) ? `<br>${esc(floodText(s.i))}` : ''}${s.street ? `<br><a href="${esc(lookupUrl(s))}" target="_blank" rel="noopener">Look up on property.com.au ↗</a>` : ''}`);
+      if (!opts.faint) mk.bindPopup(() => `<b>${fmtMoney(s.price)}</b> · ${fmtDate(s.d)}<br>${esc(s.house ? s.house + ' ' : '')}${esc(titleCase(s.street))}, ${esc(titleCase(s.loc))}<br><span style="opacity:.7">${esc(typeName(s.type))}${s.area ? ' · ' + fmtArea(s.area) : ''}${s.approx ? ' · position approximate' : ''}</span>${floodText(s.i) ? `<br>${esc(floodText(s.i))}<br><span style="opacity:.75">${esc(eventText(s.i))}</span>` : ''}${s.street ? `<br><a href="${esc(lookupUrl(s))}" target="_blank" rel="noopener">Look up on property.com.au ↗</a>` : ''}`);
       mk.addTo(layer);
     }
     return { shown: shown.length, suburbs: subs.size, bands: [t1, t2], cols };
