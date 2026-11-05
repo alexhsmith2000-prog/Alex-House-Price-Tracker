@@ -59,6 +59,13 @@
       <p class="hint" id="tableNote"></p>
     </section>
 
+    <section class="panel" id="resalePanel" hidden>
+      <div class="panel-head"><h2>Resales: same home, sold twice</h2></div>
+      <p class="hint" id="resaleSummary"></p>
+      <ul class="sales" id="resaleList"></ul>
+      <button class="ghost block" id="moreResales" hidden>Show more</button>
+    </section>
+
     <section class="panel" id="salesPanel" hidden>
       <div class="panel-head"><h2 id="salesTitle">Sales</h2></div>
       <ul class="sales" id="salesList"></ul>
@@ -100,6 +107,13 @@
           <label>Min price <select id="fMin"></select></label>
           <label>Max price <select id="fMax"></select></label>
         </div>
+        <div class="row2">
+          <label>Min land size <select id="fLandMin"></select></label>
+          <label>Max land size <select id="fLandMax"></select></label>
+        </div>
+        <label>Street (optional)
+          <input type="search" id="fStreet" placeholder="e.g. Centre St" autocomplete="off">
+        </label>
         <p class="error" id="filterError" hidden></p>
       </div>
       <div class="actions sheet-foot">

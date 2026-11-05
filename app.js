@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '11'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '12'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -52,6 +52,7 @@
     { id: 'farm', name: 'Farm (40 ha+)' },
     { id: 'other', name: 'Commercial / other' },
   ];
+  const LAND_STEPS = [300, 450, 600, 800, 1000, 1500, 2000, 4000, 10000, 20000, 50000, 100000, 200000, 400000, 1000000];
   const PRICE_STEPS = [100e3, 200e3, 300e3, 400e3, 500e3, 600e3, 700e3, 800e3, 900e3, 1e6, 1.25e6, 1.5e6, 2e6, 2.5e6, 3e6, 5e6];
   const DEFAULT_VIEWS = [
     { id: 'v-casino', name: 'Casino', area: 'casino', locs: ['CASINO'], types: ['house', 'unit'], min: 0, max: 0 },
@@ -168,7 +169,7 @@
   }
 
   const COLS = { d: Uint32Array, price: Float64Array, area: Float64Array, loc: Uint32Array, street: Uint32Array, house: Uint32Array,
-    zone: Uint16Array, purpose: Uint16Array, nature: Uint8Array, strata: Uint8Array, dl: Float64Array, dealing: Uint32Array, interest: Uint8Array };
+    zone: Uint16Array, purpose: Uint16Array, nature: Uint8Array, strata: Uint8Array, dl: Float64Array, dealing: Uint32Array, interest: Uint8Array, prop: Uint32Array };
   const emptyStore = () => ({ v: 2, n: 0, ...Object.fromEntries(Object.entries(COLS).map(([k, T]) => [k, new T(0)])),
     dict: { loc: [], street: [], house: [], zone: [], purpose: [], dealing: [''] } });
 
@@ -236,7 +237,7 @@
     });
     placeAll();
     DATA_INFO = N ? { generated: FILES.updated, latest, excluded, needsReimport: N > 0 && !(C.interest && C.interest.length === N && C.interest.some((x) => x)) } : null;
-    DATA_VER++; salesCache.clear();
+    DATA_VER++; salesCache.clear(); streetMatchCache.clear(); RESALE = null;
   }
 
   async function loadSales() {
@@ -246,8 +247,19 @@
     try { if (geoRes && geoRes.ok) loadGeo(await geoRes.json()); } catch { /* house positions unavailable */ }
     try { if (subRes && subRes.ok) loadSuburbs(await subRes.json()); } catch { /* suburb positions unavailable */ }
     if (!stored) await migrateOldStore();
+    if (C.n && (!C.prop || C.prop.length !== C.n)) await addPropIds();
     derive();
     render();
+  }
+
+  // sales imported before version 12 have no property id column: work it out from the stored keys
+  async function addPropIds() {
+    const keys = (await idbGet('store2-keys')) || [];
+    if (keys.length !== C.n) return;
+    const prop = new Uint32Array(C.n);
+    for (let i = 0; i < C.n; i++) prop[i] = propOfKey(keys[i]);
+    C.prop = prop;
+    try { await idbSet('store2', C); } catch { /* keep it in memory for this session */ }
   }
 
   // earlier versions kept Northern Rivers sales as a plain object: convert once
@@ -260,6 +272,9 @@
     await b.save([], old.updated);
     try { localStorage.setItem('nr-prices.reimport', '1'); } catch { /* ignore */ }
   }
+
+  // the Valuer General property id is the 2nd part of a sale's key: district|property|sale counter|contract date
+  const propOfKey = (key) => { const p = parseInt(String(key).split('|')[1], 10); return Number.isFinite(p) && p > 0 && p < 4294967295 ? p : 0; };
 
   // Import helper: grows columns as plain arrays, then saves them as typed arrays.
   function builder() {
@@ -288,7 +303,7 @@
         cols.d[i] = r[0]; cols.loc[i] = intern('loc', `${r[1]}|${r[2]}`); cols.price[i] = r[3]; cols.area[i] = r[4] == null ? NaN : r[4];
         cols.zone[i] = intern('zone', r[5] || ''); cols.nature[i] = r[6] ? r[6].charCodeAt(0) : 0; cols.purpose[i] = intern('purpose', r[7] || '');
         cols.strata[i] = r[8] ? 1 : 0; cols.street[i] = intern('street', r[9] || ''); cols.dl[i] = dl;
-        cols.dealing[i] = r[11] ? intern('dealing', r[11]) : 0; cols.house[i] = intern('house', r[12] || ''); cols.interest[i] = r[13] || 0;
+        cols.dealing[i] = r[11] ? intern('dealing', r[11]) : 0; cols.house[i] = intern('house', r[12] || ''); cols.interest[i] = r[13] || 0; cols.prop[i] = propOfKey(key);
       },
       async save(files, updated) {
         const store = { v: 2, n: cols.d.length, dict, ...Object.fromEntries(Object.entries(COLS).map(([k, T]) => [k, T.from(cols[k])])) };
@@ -301,10 +316,26 @@
     };
   }
 
+  // street names: the records abbreviate (CENTRE ST), people often type them out (Centre Street)
+  const STREET_ABBR = { STREET: 'ST', ROAD: 'RD', AVENUE: 'AVE', DRIVE: 'DR', CRESCENT: 'CRES', PLACE: 'PL', COURT: 'CT', CLOSE: 'CL', PARADE: 'PDE',
+    HIGHWAY: 'HWY', TERRACE: 'TCE', CIRCUIT: 'CCT', BOULEVARD: 'BVD', ESPLANADE: 'ESP', GROVE: 'GR', PARKWAY: 'PKWY', SQUARE: 'SQ', AV: 'AVE', CR: 'CRES' };
+  const normStreet = (t) => String(t).toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(Boolean).map((w) => STREET_ABBR[w] || w).join(' ');
+  const streetMatchCache = new Map();
+  function streetMatcher(text) {
+    const q = normStreet(text);
+    let ok = streetMatchCache.get(q);
+    if (ok) return ok;
+    ok = new Uint8Array(C.dict.street.length);
+    C.dict.street.forEach((st, i) => { const n = normStreet(st); ok[i] = n === q || n.startsWith(q + ' ') || n.startsWith(q) ? 1 : 0; });
+    if (streetMatchCache.size > 20) streetMatchCache.clear();
+    streetMatchCache.set(q, ok);
+    return ok;
+  }
+
   const salesCache = new Map();
   function salesFor(v) {
     if (!N) return [];
-    const key = JSON.stringify([v.area, v.locs, v.types, v.min, v.max, v.shape]);
+    const key = JSON.stringify([v.area, v.locs, v.types, v.min, v.max, v.shape, v.landMin, v.landMax, v.street]);
     const hit = salesCache.get(key);
     if (hit) return hit; // shared, newest first: callers must not modify it
     const area = areaOf(v.area);
@@ -315,11 +346,15 @@
     // a drawn part of town only uses house positions there; suburb centres are fine for big areas
     const fine = shape && (shape.type === 'circle' ? shape.r <= 3000 : polyAreaKm2(shape.pts) <= 30);
     const min = v.min || 0, max = v.max || Infinity;
+    const landMin = v.landMin || 0, landMax = v.landMax || Infinity, landOn = !!(v.landMin || v.landMax);
+    const streetOk = v.street ? streetMatcher(v.street) : null;
     const out = [];
     for (let i = 0; i < N; i++) {
       if (!DER.keep[i] || !locOk[C.loc[i]] || !typeOk[DER.type[i]]) continue;
       const p = C.price[i];
       if (p < min || p > max) continue;
+      if (landOn) { const a = C.area[i]; if (!(a >= landMin && a <= landMax)) continue; } // no land size recorded → left out
+      if (streetOk && !streetOk[C.street[i]]) continue;
       if (shape) {
         const lvl = DER.level[i];
         if (!lvl || (fine && lvl === 1 && DER.houseRegion[C.loc[i]])) continue;
@@ -644,7 +679,7 @@
 
   function render() {
     renderHeader(); renderChips(); renderFilterBar(); renderSegs();
-    renderCards(); renderChart(); renderMapPanel(); renderTable(); renderSalesList();
+    renderCards(); renderChart(); renderMapPanel(); renderTable(); renderResales(); renderSalesList();
   }
 
   function renderHeader() {
@@ -657,7 +692,7 @@
   function renderChips() {
     const nav = $('#viewChips'); nav.replaceChildren();
     for (const v of views) {
-      nav.append(el('button', { class: 'chip', role: 'tab', 'aria-selected': String(prefs.view === v.id), onclick: () => { prefs.view = v.id; salesShown = 30; savePrefs(); render(); } },
+      nav.append(el('button', { class: 'chip', role: 'tab', 'aria-selected': String(prefs.view === v.id), onclick: () => { prefs.view = v.id; salesShown = 30; resalesShown = 10; savePrefs(); render(); } },
         el('span', { class: 'dot', style: `background:${viewColor(v)}` }), v.name));
     }
     nav.append(el('button', { class: 'chip', role: 'tab', 'aria-selected': String(prefs.view === COMPARE), onclick: () => { prefs.view = COMPARE; savePrefs(); render(); } }, 'Compare'));
@@ -670,7 +705,9 @@
     let where = v.locs && v.locs.length ? (v.locs.length <= 2 ? v.locs.map(titleCase).join(', ') : `${v.locs.length} locations · ${area.name}`) : area.name;
     if (v.shape) where += ` · ${shapeLabel(v.shape)}`;
     const types = !v.types || !v.types.length || v.types.length === TYPES.length ? 'All property types' : v.types.map(typeName).join(', ');
-    const price = v.min && v.max ? `${fmtShort(v.min)}–${fmtShort(v.max)}` : v.min ? `${fmtShort(v.min)}+` : v.max ? `Up to ${fmtShort(v.max)}` : 'Any price';
+    let price = v.min && v.max ? `${fmtShort(v.min)}–${fmtShort(v.max)}` : v.min ? `${fmtShort(v.min)}+` : v.max ? `Up to ${fmtShort(v.max)}` : 'Any price';
+    if (v.landMin || v.landMax) price += ` · land ${v.landMin && v.landMax ? `${fmtArea(v.landMin)}–${fmtArea(v.landMax)}` : v.landMin ? `${fmtArea(v.landMin)}+` : `up to ${fmtArea(v.landMax)}`}`;
+    if (v.street) where = `Street “${titleCase(v.street)}” · ${where}`;
     return { where, types, price };
   }
 
@@ -877,6 +914,78 @@
     $('#tableNote').textContent = months.length ? '* Sales for this month are still being reported. Tap a month to add your listing (asking) price.' : '';
   }
 
+  // ---------- resales: the same property sold twice ----------
+  // For each sale, the previous sale of the same property (or -1). Built once, when first needed.
+  let RESALE = null;
+  function resaleIndex() {
+    if (RESALE) return RESALE;
+    const prev = new Int32Array(N).fill(-1);
+    if (C.prop && C.prop.length === N) {
+      const ids = [];
+      for (let i = 0; i < N; i++) if (DER.keep[i] && C.prop[i]) ids.push(i);
+      const order = Uint32Array.from(ids).sort((a, b) => (C.prop[a] - C.prop[b]) || (C.d[a] - C.d[b]));
+      for (let k = 1; k < order.length; k++) if (C.prop[order[k]] === C.prop[order[k - 1]]) prev[order[k]] = order[k - 1];
+    }
+    RESALE = prev;
+    return prev;
+  }
+  const dayNum = (d) => Date.UTC(Math.floor(d / 10000), (Math.floor(d / 100) % 100) - 1, d % 100) / 864e5;
+  // Pairs of sales of the same property: later sale matches the search; leaves out pairs that aren't comparable.
+  function resalesFor(list) {
+    const prev = resaleIndex();
+    const out = [];
+    for (const s of list) {
+      const j = prev[s.i];
+      if (j < 0) continue;
+      const i = s.i;
+      const years = (dayNum(C.d[i]) - dayNum(C.d[j])) / 365.25;
+      if (years < 0.5) continue;                                  // quick re-sales are often not like-for-like
+      if (C.nature[j] === 86 && C.nature[i] !== 86) continue;     // was vacant land, now has a house ('V')
+      if (C.strata[j] !== C.strata[i]) continue;
+      const a1 = C.area[j], a2 = C.area[i];
+      if (a1 > 0 && a2 > 0 && Math.abs(a1 - a2) / Math.max(a1, a2) > 0.1) continue; // block was subdivided or merged
+      const total = C.price[i] / C.price[j] - 1;
+      const yearly = Math.pow(C.price[i] / C.price[j], 1 / years) - 1;
+      if (yearly > 0.5 || yearly < -0.3) continue;                // likely a rebuild, renovation or unusual sale
+      out.push({ s, prevPrice: C.price[j], prevD: C.d[j], years, total, yearly });
+    }
+    return out;
+  }
+  const fmtPct = (x) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}%`;
+  let resalesShown = 10;
+  function renderResales() {
+    const panel = $('#resalePanel');
+    const v = currentView();
+    if (!v || !N || !C.prop) { panel.hidden = true; return; }
+    const pairs = resalesFor(salesFor(v));
+    panel.hidden = false;
+    const box = $('#resaleList'); box.replaceChildren();
+    if (!pairs.length) {
+      $('#resaleSummary').textContent = 'No homes in this search have sold twice yet in your data. Importing more years of history gives more resales.';
+      $('#moreResales').hidden = true;
+      return;
+    }
+    const recent = pairs.filter((r) => r.s.d >= Number(String(thisMonth()).replace('-', '')) * 100 - 30000); // last ~3 years
+    const med = median(pairs.map((r) => r.yearly));
+    const medRecent = recent.length >= 5 ? median(recent.map((r) => r.yearly)) : null;
+    $('#resaleSummary').replaceChildren(
+      el('b', {}, `${fmtPct(med)} a year`), ` typical growth, from ${pairs.length.toLocaleString('en-AU')} home${pairs.length === 1 ? '' : 's'} sold twice`,
+      medRecent != null ? ` (${fmtPct(medRecent)} a year for resales in the last 3 years)` : '',
+      '. Each home is compared only with its own earlier sale, so the mix of homes doesn’t skew it. Renovations still push some results up.');
+    for (const r of pairs.slice(0, resalesShown)) {
+      const s = r.s;
+      box.append(el('li', {},
+        el('div', { class: 'srow' }, el('b', {}, `${fmtShort(r.prevPrice)} → ${fmtShort(s.price)}`),
+          el('span', { class: r.total >= 0 ? 'up' : 'down' }, `${fmtPct(r.total)} · ${fmtPct(r.yearly)}/yr`)),
+        el('div', { class: 'sline' }, `${s.street ? (s.house ? s.house + ' ' : '') + titleCase(s.street) + ', ' : ''}${titleCase(s.loc)}`),
+        el('div', { class: 'smeta' }, `${fmtDate(r.prevD)} → ${fmtDate(s.d)} (${r.years.toFixed(1)} years) · ${typeName(s.type)}${s.area ? ' · ' + fmtArea(s.area) : ''}`),
+        s.street ? el('a', { class: 'lookup', href: lookupUrl(s), target: '_blank', rel: 'noopener' }, 'Look up on property.com.au ↗') : null));
+    }
+    const more = $('#moreResales');
+    more.hidden = pairs.length <= resalesShown;
+    more.onclick = () => { resalesShown += 20; renderResales(); };
+  }
+
   let salesShown = 30;
   function renderSalesList() {
     const box = $('#salesList'); box.replaceChildren();
@@ -984,7 +1093,7 @@
       : `${list.length.toLocaleString('en-AU')} sales: ${res.shown.toLocaleString('en-AU')} shown at their house${res.shown < houseN ? ' (latest only)' : ''}${res.suburbs ? `, the rest grouped into ${res.suburbs.toLocaleString('en-AU')} suburb bubble${res.suburbs === 1 ? '' : 's'}` : ''}${placed.length < list.length ? ` · ${(list.length - placed.length).toLocaleString('en-AU')} couldn't be placed` : ''}. Tap a dot for details.`;
     setTimeout(() => {
       mainMap.invalidateSize();
-      const key = JSON.stringify([v.id, v.area, v.locs, v.types, v.min, v.max, v.shape]);
+      const key = JSON.stringify([v.id, v.area, v.locs, v.types, v.min, v.max, v.shape, v.landMin, v.landMax, v.street]);
       if (key === lastFit) return;
       lastFit = key;
       if (sl) mainMap.fitBounds(sl.getBounds(), { padding: [16, 16] });
@@ -1090,6 +1199,12 @@
     const areaSel = $('#fArea'); areaSel.replaceChildren();
     for (const g of [...new Set(AREAS.map((a) => a.group))]) areaSel.append(el('optgroup', { label: g }, ...AREAS.filter((a) => a.group === g).map((a) => el('option', { value: a.id }, a.name))));
     areaSel.value = editing.area;
+    for (const [id, anyLabel, val] of [['#fLandMin', 'No min', editing.landMin], ['#fLandMax', 'No max', editing.landMax]]) {
+      const sel = $(id);
+      sel.replaceChildren(el('option', { value: 0 }, anyLabel), ...LAND_STEPS.map((a) => el('option', { value: a }, fmtArea(a))));
+      sel.value = String(val || 0);
+    }
+    $('#fStreet').value = editing.street || '';
     for (const [id, anyLabel, val] of [['#fMin', 'No min', editing.min], ['#fMax', 'No max', editing.max]]) {
       const sel = $(id);
       const steps = val && !PRICE_STEPS.includes(val) ? [...PRICE_STEPS, val].sort((a, b) => a - b) : PRICE_STEPS;
@@ -1161,6 +1276,10 @@
   $('#fLocSearch').addEventListener('input', () => { clearTimeout(locSearchT); locSearchT = setTimeout(renderLocChecks, 150); });
   $('#fLocAll').addEventListener('click', () => { editing.locs = []; $('#fLocSearch').value = ''; renderLocChecks(); });
   $('#fMin').addEventListener('change', (e) => { editing.min = +e.target.value; updateCount(); });
+  $('#fLandMin').addEventListener('change', (e) => { editing.landMin = +e.target.value; updateCount(); });
+  $('#fLandMax').addEventListener('change', (e) => { editing.landMax = +e.target.value; updateCount(); });
+  let streetT;
+  $('#fStreet').addEventListener('input', (e) => { clearTimeout(streetT); streetT = setTimeout(() => { editing.street = e.target.value.trim(); updateCount(); }, 250); });
   $('#fMax').addEventListener('change', (e) => { editing.max = +e.target.value; updateCount(); });
   $('#cancelFilters').addEventListener('click', () => fDlg.close());
 
@@ -1169,6 +1288,8 @@
     const err = (m) => { const e = $('#filterError'); e.textContent = m; e.hidden = false; e.scrollIntoView({ block: 'nearest' }); };
     if (!name) return err('Give this search a name, e.g. “Casino acreage under $800k”.');
     if (editing.min && editing.max && editing.min > editing.max) return err('The minimum price is above the maximum.');
+    if (editing.landMin && editing.landMax && editing.landMin > editing.landMax) return err('The minimum land size is above the maximum.');
+    editing.street = $('#fStreet').value.trim();
     if (views.some((v) => v.name.toLowerCase() === name.toLowerCase() && (asNew || v.id !== editing.id))) return err('You already have a search with that name.');
     const rec = { ...editing, name };
     if (asNew) { rec.id = 'v-' + Date.now().toString(36); views.push(rec); }
