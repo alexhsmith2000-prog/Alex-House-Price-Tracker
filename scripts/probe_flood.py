@@ -47,3 +47,13 @@ for lname, url in LAYERS.items():
             print(f"{aname}: {n} polygons; sample: {json.dumps(attrs)[:400]}")
         except Exception as e:
             print(f"{aname}: query failed: {e}")
+
+print("\n=== Whole-layer check (is anything there, and for which councils?)")
+for lname, url in LAYERS.items():
+    try:
+        total = get(url, {"where": "1=1", "returnCountOnly": "true", "f": "json"}).get("count")
+        lgas = get(url, {"where": "1=1", "outFields": "LGA_NAME", "returnDistinctValues": "true", "returnGeometry": "false", "f": "json"})
+        names = sorted({(f.get("attributes") or {}).get("LGA_NAME") or "?" for f in lgas.get("features", [])})
+        print(f"{lname}: {total} polygons in total; councils ({len(names)}): {', '.join(names)}")
+    except Exception as e:
+        print(f"{lname}: whole-layer query failed: {e}")
