@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '19'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '20'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -1079,17 +1079,23 @@
     const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
     const lines = [];
     for (let pn = 1; pn <= doc.numPages; pn++) {
-      const tc = await (await doc.getPage(pn)).getTextContent();
+      const page = await doc.getPage(pn);
+      const vp = page.getViewport({ scale: 1 });
+      const tc = await page.getTextContent();
       const rows = [];
       for (const it of tc.items) {
         if (!it.str || !it.str.trim()) continue;
-        const x = it.transform[4], y = it.transform[5];
-        let row = rows.find((r) => Math.abs(r.y - y) < 3);
-        if (!row) rows.push((row = { y, items: [] }));
-        row.items.push({ x, s: it.str.trim() });
+        // screen position and reading direction (some council PDFs are laid out sideways)
+        const m = pdfjsLib.Util.transform(vp.transform, it.transform);
+        const horiz = Math.abs(m[0]) >= Math.abs(m[1]);
+        const k = horiz ? m[5] * Math.sign(m[0] || 1) : -m[4] * Math.sign(m[1]);
+        const col = horiz ? m[4] * Math.sign(m[0] || 1) : m[5] * Math.sign(m[1]);
+        let row = rows.find((r) => Math.abs(r.k - k) < 3);
+        if (!row) rows.push((row = { k, items: [] }));
+        row.items.push({ col, s: it.str.trim() });
       }
-      rows.sort((a, b) => b.y - a.y);
-      for (const r of rows) lines.push(r.items.sort((a, b) => a.x - b.x).map((t) => t.s).join(' '));
+      rows.sort((a, b) => a.k - b.k);
+      for (const r of rows) lines.push(r.items.sort((a, b) => a.col - b.col).map((t) => t.s).join(' '));
     }
     return lines;
   }
@@ -1098,7 +1104,7 @@
   // e.g. "16 Ballina Road Lismore 8.723 8.397 8.858 Ampol Service Station 12.3"
   function parseFloodLine(line) {
     line = line.replace(/^(\d+[A-Za-z]?)\s*[-–]\s*(\d+[A-Za-z]?)\b/, '$1-$2'); // "5 - 7 Carrington Street" → "5-7 …"
-    const m = line.match(/^(\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?)\s+(.+)$/);
+    const m = line.match(/^((?:\d+[A-Za-z]?\s?[-/]\s?)*\d+[A-Za-z]?)\s+(.+)$/); // 16, 124a, 5-7, 2-3/101 (units/street number)
     if (!m) return null;
     const toks = m[2].split(/\s+/);
     const firstNum = toks.findIndex((t) => /^\d+(\.\d+)?$/.test(t));
@@ -1110,7 +1116,7 @@
     const nums = toks.filter((t) => /^\d+(\.\d+)?$/.test(t)).map(Number);
     const floor = Number(toks[firstNum]), flood = nums[nums.length - 1];
     if (!(floor > 0 && floor < 60 && flood > 0 && flood < 60) || nums.length < 2) return null;
-    return { num: houseKey(m[1].split(/[-/]/)[0]), street: normStreet(words.slice(0, k + 1).join(' ')), suburb: words.slice(k + 1).join(' ').replace(/\(.*?\)|\(.*$/g, ' ').replace(/[^A-Za-z ]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase(), floor, flood };
+    return { num: houseKey(m[1].includes('/') ? m[1].split('/').pop() : m[1].split('-')[0]), street: normStreet(words.slice(0, k + 1).join(' ')), suburb: words.slice(k + 1).join(' ').replace(/\(.*?\)|\(.*$/g, ' ').replace(/[^A-Za-z ]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase(), floor, flood };
   }
   async function importFloodPdfs(fileList) {
     const files = [...fileList];
