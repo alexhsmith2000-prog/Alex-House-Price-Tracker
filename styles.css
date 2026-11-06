@@ -310,3 +310,5 @@ a.lookup { display: inline-block; margin-top: 4px; font-size: .82rem; color: var
 #mapPanel.full .map { flex: 1 0 auto; height: auto; min-height: 72dvh; }
 body.noscroll { overflow: hidden; }
 body.noscroll .fab { display: none; }
+#floodStatus { display: grid; gap: 4px; }
+#floodStatus .fline { display: block; }

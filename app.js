@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '18'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '19'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -1097,6 +1097,7 @@
     'CLOSE', 'CL', 'PARADE', 'PDE', 'TERRACE', 'TCE', 'HIGHWAY', 'HWY', 'WAY', 'CIRCUIT', 'CCT', 'GROVE', 'ESPLANADE', 'BOULEVARD', 'SQUARE', 'ARCADE', 'MALL', 'RISE', 'VIEW']);
   // e.g. "16 Ballina Road Lismore 8.723 8.397 8.858 Ampol Service Station 12.3"
   function parseFloodLine(line) {
+    line = line.replace(/^(\d+[A-Za-z]?)\s*[-–]\s*(\d+[A-Za-z]?)\b/, '$1-$2'); // "5 - 7 Carrington Street" → "5-7 …"
     const m = line.match(/^(\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?)\s+(.+)$/);
     if (!m) return null;
     const toks = m[2].split(/\s+/);
@@ -1119,16 +1120,19 @@
     for (const f of files) {
       toast(`Reading ${f.name}…`);
       try {
-        let n = 0;
+        let n = 0, lines = 0;
+        const subsInFile = new Set(), unread = [];
         for (const line of await pdfLines(f)) {
           const r = parseFloodLine(line);
-          if (!r) continue;
+          if (/^\d/.test(line)) lines++;
+          if (!r) { if (/^\d/.test(line) && /\d+\.\d+/.test(line) && line.split(/\s+/).some((w) => STREET_TYPE_WORDS.has(w.toUpperCase())) && unread.length < 3) unread.push(line.slice(0, 90)); continue; }
+          subsInFile.add(r.suburb);
           const key = `${r.suburb}|${r.street}|${r.num}`;
           const old = data.recs[key];
           if (!old || r.floor < old[0]) data.recs[key] = [r.floor, r.flood]; // several floors at one address: keep the lowest
           n++;
         }
-        data.files = data.files.filter((x) => x.name !== f.name).concat({ name: f.name, n, imported: new Date().toISOString() });
+        data.files = data.files.filter((x) => x.name !== f.name).concat({ name: f.name, n, lines, suburbs: [...subsInFile], unread, imported: new Date().toISOString() });
         report.push(n ? `${f.name}: ${n} floor levels` : `${f.name}: no floor-level table found`);
       } catch (e) { report.push(`${f.name}: ${e.message || e}`); }
     }
@@ -1140,10 +1144,14 @@
   function renderFloodStatus() {
     const box = $('#floodStatus'); if (!box) return;
     if (!FLOOD || !Object.keys(FLOOD.recs).length) { box.textContent = 'No flood levels imported yet. Import the council’s “Flood & Floor Levels” PDF for a suburb (Lismore City Council publishes one per suburb).'; return; }
-    const addrs = Object.keys(FLOOD.recs).length;
-    let matched = 0; if (DER && DER.flood) for (let i = 0; i < N; i++) if (!Number.isNaN(DER.flood[i])) matched++;
-    const subs = [...new Set(Object.keys(FLOOD.recs).map((k) => titleCase(k.split('|')[0])))].join(', ');
-    box.textContent = `${addrs.toLocaleString('en-AU')} addresses with floor levels (${subs}) from ${FLOOD.files.map((f) => f.name).join(', ')}. ${matched.toLocaleString('en-AU')} of your sales match one. Kept on this phone only.`;
+    // per suburb: addresses read, placed on the map, and matching sales
+    const per = new Map();
+    for (const k of Object.keys(FLOOD.recs)) { const sub = k.split('|')[0]; const o = per.get(sub) || { n: 0, placed: 0, sales: 0 }; o.n++; per.set(sub, o); }
+    for (const p of floodPoints()) { const sub = p.label.split(', ').pop().toUpperCase(); const o = per.get(sub); if (o) o.placed++; }
+    if (DER && DER.flood) for (let i = 0; i < N; i++) if (!Number.isNaN(DER.flood[i])) { const o = per.get(DER.locName[C.loc[i]]); if (o) o.sales++; }
+    box.replaceChildren(el('span', {}, 'Kept on this phone only.'),
+      ...[...per].map(([sub, o]) => el('span', { class: 'fline' }, `${titleCase(sub)}: ${o.n.toLocaleString('en-AU')} addresses, ${o.placed.toLocaleString('en-AU')} placed on the map, ${o.sales.toLocaleString('en-AU')} of your sales match`)),
+      ...FLOOD.files.map((f) => el('span', { class: 'fline' }, `File “${f.name}”: ${f.n.toLocaleString('en-AU')} rows read${f.suburbs ? ` (${f.suburbs.map(titleCase).join(', ') || 'no suburb found'})` : ''}${f.unread && f.unread.length ? `. Rows it couldn't read look like: “${f.unread.join('” · “')}”` : ''}`)));
   }
 
   // ---------- resales: the same property sold twice ----------
