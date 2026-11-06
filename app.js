@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '17'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '18'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -238,7 +238,7 @@
     placeAll();
     matchFlood();
     DATA_INFO = N ? { generated: FILES.updated, latest, excluded, needsReimport: N > 0 && !(C.interest && C.interest.length === N && C.interest.some((x) => x)) } : null;
-    DATA_VER++; salesCache.clear(); streetMatchCache.clear(); RESALE = null; floodPtsCache = null;
+    DATA_VER++; salesCache.clear(); streetMatchCache.clear(); RESALE = null; floodPtsCache = null; surfaceCache.clear();
   }
 
   async function loadSales() {
@@ -1319,20 +1319,92 @@
     return pts;
   }
   const floodLevelOver = (d100, which) => which === '100' ? d100 : overEvent(d100, +which); // floor height above that flood (negative = water over floor)
+  // Smooth water surface: depth over the floor at listed addresses, blended between neighbours
+  // (inverse-distance weighting on a ~10 m grid) and faded out away from any listed address.
+  // It is a picture of the council data, not a flood model: nothing is drawn far from a listed home.
+  const SURFACE_REACH = 70; // metres: how far a home's value spreads
+  const surfaceCache = new Map();
+  function floodSurface(which) {
+    const pts = floodPoints();
+    const key = `${which}|${pts.length}`;
+    if (surfaceCache.has(key)) return surfaceCache.get(key);
+    if (!pts.length) return null;
+    let la1 = 90, la2 = -90, lo1 = 180, lo2 = -180;
+    for (const p of pts) { la1 = Math.min(la1, p.lat); la2 = Math.max(la2, p.lat); lo1 = Math.min(lo1, p.lon); lo2 = Math.max(lo2, p.lon); }
+    const mLat = 111320, mLon = 111320 * Math.cos(toRad((la1 + la2) / 2));
+    const padLat = SURFACE_REACH / mLat, padLon = SURFACE_REACH / mLon;
+    la1 -= padLat; la2 += padLat; lo1 -= padLon; lo2 += padLon;
+    const cell = 8; // metres per pixel
+    const W = Math.min(1600, Math.ceil(((lo2 - lo1) * mLon) / cell)), H = Math.min(1600, Math.ceil(((la2 - la1) * mLat) / cell));
+    // bucket the homes so each pixel only looks at nearby ones
+    const B = SURFACE_REACH, buckets = new Map();
+    const bx = (lon) => Math.floor(((lon - lo1) * mLon) / B), by = (lat) => Math.floor(((lat - la1) * mLat) / B);
+    const vals = pts.map((p) => -floodLevelOver(p.d100, which)); // water depth over the floor (negative = dry)
+    pts.forEach((p, i) => { const k = `${bx(p.lon)},${by(p.lat)}`; (buckets.get(k) || buckets.set(k, []).get(k)).push(i); });
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H), d = img.data;
+    // depth → colour: shallow light blue to deep navy
+    const stops = [[0, [150, 205, 240]], [0.75, [70, 145, 215]], [1.5, [30, 90, 180]], [3, [12, 45, 120]]];
+    const colour = (v) => { for (let k = 1; k < stops.length; k++) if (v <= stops[k][0]) { const [a0, c0] = stops[k - 1], [a1, c1] = stops[k], f = (v - a0) / (a1 - a0); return c0.map((c, j) => c + (c1[j] - c) * f); } return stops[stops.length - 1][1]; };
+    for (let j = 0; j < H; j++) {
+      const lat = la2 - ((j + 0.5) * cell) / mLat;
+      const gy = by(lat);
+      for (let i = 0; i < W; i++) {
+        const lon = lo1 + ((i + 0.5) * cell) / mLon;
+        const gx = bx(lon);
+        let sw = 0, sv = 0, dmin = Infinity;
+        for (let yy = gy - 1; yy <= gy + 1; yy++) for (let xx = gx - 1; xx <= gx + 1; xx++) {
+          const list = buckets.get(`${xx},${yy}`); if (!list) continue;
+          for (const k of list) {
+            const dx = (pts[k].lon - lon) * mLon, dy = (pts[k].lat - lat) * mLat, dd = dx * dx + dy * dy;
+            if (dd > SURFACE_REACH * SURFACE_REACH) continue;
+            if (dd < dmin) dmin = dd;
+            const w = 1 / (dd + 100);
+            sw += w; sv += w * vals[k];
+          }
+        }
+        if (!sw) continue;
+        const v = sv / sw;
+        if (v <= 0) continue; // floor above the water here: leave clear
+        const reach = Math.max(0, Math.min(1, (SURFACE_REACH - Math.sqrt(dmin)) / (SURFACE_REACH - 25)));
+        const alpha = reach * Math.min(1, 0.45 + v / 2) * 0.8;
+        const [r, g, b] = colour(v), o = (j * W + i) * 4;
+        d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = Math.round(alpha * 255);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const out = { url: cv.toDataURL('image/png'), bounds: [[la1, lo1], [la2, lo2]] };
+    if (surfaceCache.size > 6) surfaceCache.clear();
+    surfaceCache.set(key, out);
+    return out;
+  }
   function addFloodLayer(layer, which, opts = {}) {
     if (!which || which === 'off') return 0;
     const pts = floodPoints();
-    const deep = cssVar('--down'), shallow = cssVar('--s3'), dry = cssVar('--up');
-    for (const p of pts) {
-      const o = floodLevelOver(p.d100, which);
-      const col = o < -1 ? deep : o < 0 ? shallow : dry;
-      const c = L.circle([p.lat, p.lon], { radius: 30, stroke: false, fillColor: col, fillOpacity: opts.faint ? 0.3 : (o < 0 ? 0.5 : 0.35), interactive: !opts.faint, pane: 'floodPane' });
-      if (!opts.faint) c.bindPopup(() => `<b>${esc(p.label)}</b><br>${o < 0 ? `About ${Math.abs(o).toFixed(1)} m of water over the floor` : `Floor about ${o.toFixed(1)} m above the water`} in ${which === '100' ? 'a 1-in-100 flood' : `the ${which} flood (est.)`}`);
-      c.addTo(layer);
+    const surf = floodSurface(which);
+    if (surf) L.imageOverlay(surf.url, surf.bounds, { pane: 'floodPane', opacity: opts.faint ? 0.55 : 1, className: 'flood-surface', interactive: false }).addTo(layer);
+    if (!opts.faint) {
+      // invisible tap targets so each listed home can still be checked
+      for (const p of pts) {
+        const o = floodLevelOver(p.d100, which);
+        L.circle([p.lat, p.lon], { radius: 14, stroke: false, fillOpacity: 0, pane: 'floodPane' })
+          .bindPopup(() => `<b>${esc(p.label)}</b><br>${o < 0 ? `About ${Math.abs(o).toFixed(1)} m of water over the floor` : `Floor about ${o.toFixed(1)} m above the water`} in ${which === '100' ? 'a 1-in-100 flood' : `the ${which} flood (est.)`}`)
+          .addTo(layer);
+      }
     }
     return pts.length;
   }
   function floodPane(map) { if (!map.getPane('floodPane')) { const pn = map.createPane('floodPane'); pn.style.zIndex = 350; } }
+
+  function setMapFull(on) {
+    $('#mapPanel').classList.toggle('full', on);
+    document.body.classList.toggle('noscroll', on);
+    $('#mapFullBtn').textContent = on ? 'Close' : 'Full screen';
+    $('#mapFullBtn').setAttribute('aria-pressed', String(on));
+    if (mainMap) setTimeout(() => mainMap.invalidateSize(), 60);
+  }
+  $('#mapFullBtn').addEventListener('click', () => setMapFull(!$('#mapPanel').classList.contains('full')));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#mapPanel').classList.contains('full')) setMapFull(false); });
 
   let mainMap = null, mainLayer = null, lastFit = '';
   function renderMapPanel() {
@@ -1351,8 +1423,8 @@
       floodShown = addFloodLayer(mainLayer, prefs.floodLayer);
       const fl = $('#floodLegend'); fl.replaceChildren();
       if (prefs.floodLayer !== 'off') {
-        [['--down', 'Over 1 m of water over the floor'], ['--s3', 'Up to 1 m over the floor'], ['--up', 'Floor above the water']].forEach(([c, t]) => fl.append(el('span', {}, el('i', { class: 'dot', style: `background:${cssVar(c)};opacity:.7` }), t)));
-        fl.append(el('span', {}, `${floodShown.toLocaleString('en-AU')} addresses from the council list${prefs.floodLayer === '100' ? '' : ' (estimated)'}`));
+        fl.append(el('span', { class: 'depthscale' }, 'Water over the floor', el('i', { class: 'depthbar' }), '0 → 3 m+'),
+          el('span', {}, `Smoothed between ${floodShown.toLocaleString('en-AU')} homes in the council list${prefs.floodLayer === '100' ? '' : ' (estimated)'}. Unshaded = floors stayed dry, or no listed homes nearby. Tap a spot for a home's figure.`));
       }
     }
     const list = salesFor(v);
