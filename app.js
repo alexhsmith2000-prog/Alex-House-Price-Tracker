@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '20'; // keep in step with version.json and VERSION in sw.js
+  const APP_VERSION = '21'; // keep in step with version.json and VERSION in sw.js
 
   // Show unexpected errors instead of failing silently, so they can be reported.
   const reportError = (msg) => {
@@ -686,6 +686,18 @@
   // ---------- rendering ----------
   const currentView = () => views.find((v) => v.id === prefs.view);
 
+  // Collapsible sections (tables and lists): closed until opened; remembered.
+  if (!prefs.open || typeof prefs.open !== 'object') prefs.open = {};
+  function setupCollapsers() {
+    for (const btn of document.querySelectorAll('.collapser')) {
+      const key = btn.dataset.key, body = document.querySelector(`[data-body="${key}"]`);
+      const apply = () => { const open = !!prefs.open[key]; btn.setAttribute('aria-expanded', String(open)); body.hidden = !open; };
+      btn.addEventListener('click', () => { prefs.open[key] = !prefs.open[key]; savePrefs(); apply(); });
+      apply();
+    }
+  }
+  setupCollapsers();
+
   function render() {
     renderHeader(); renderChips(); renderFilterBar(); renderSegs();
     renderCards(); renderChart(); renderMapPanel(); renderTable(); renderResales(); renderSalesList();
@@ -1268,7 +1280,8 @@
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const MAX_DOTS = 4000;
   function makeMap(elm) {
-    const m = L.map(elm, { preferCanvas: true, tap: true }).setView(NR_CENTER, 9);
+    // canvas drawing is fast with thousands of dots; 'tolerance' lets a fingertip near a dot count as a tap on it
+    const m = L.map(elm, { preferCanvas: true, renderer: L.canvas({ tolerance: 12 }) }).setView(NR_CENTER, 9);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · G-NAF',
     }).addTo(m);
@@ -1401,7 +1414,7 @@
       // invisible tap targets so each listed home can still be checked
       for (const p of pts) {
         const o = floodLevelOver(p.d100, which);
-        L.circle([p.lat, p.lon], { radius: 14, stroke: false, fillOpacity: 0, pane: 'floodPane' })
+        L.circle([p.lat, p.lon], { radius: 14, stroke: false, fillOpacity: 0 }) // same layer as the sales dots, so taps reach it
           .bindPopup(() => `<b>${esc(p.label)}</b><br>${o < 0 ? `About ${Math.abs(o).toFixed(1)} m of water over the floor` : `Floor about ${o.toFixed(1)} m above the water`} in ${which === '100' ? 'a 1-in-100 flood' : `the ${which} flood (est.)`}`)
           .addTo(layer);
       }

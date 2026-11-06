@@ -312,3 +312,17 @@ body.noscroll { overflow: hidden; }
 body.noscroll .fab { display: none; }
 #floodStatus { display: grid; gap: 4px; }
 #floodStatus .fline { display: block; }
+
+/* ---- v21: collapsible sections ---- */
+h2.collhead { margin: 0; }
+.collapser {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: none; border: 0; padding: 2px 0; margin: 0; font: inherit; font-weight: 650; font-size: 1.05rem; color: var(--text); text-align: left; cursor: pointer;
+}
+.collapser .chev { flex: none; width: 10px; height: 10px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); margin: 0 6px 4px 0; transition: transform .2s; }
+.collapser[aria-expanded="true"] .chev { transform: rotate(-135deg); margin: 4px 6px 0 0; }
+@media (prefers-reduced-motion: reduce) { .collapser .chev { transition: none; } }
+.collapser:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.collapse-body { display: grid; gap: 10px; margin-top: 10px; }
+.collapse-body[hidden] { display: none; }
+#resalePanel #resaleSummary { margin: 8px 0 0; }

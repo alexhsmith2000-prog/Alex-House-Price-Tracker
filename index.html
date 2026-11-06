@@ -64,23 +64,29 @@
     </section>
 
     <section class="panel" id="resalePanel" hidden>
-      <div class="panel-head"><h2>Resales: same home, sold twice</h2></div>
+      <h2 class="collhead"><button type="button" class="collapser" data-key="resales" aria-expanded="false"><span>Resales: same home, sold twice</span><span class="chev" aria-hidden="true"></span></button></h2>
       <p class="hint" id="resaleSummary"></p>
-      <ul class="sales" id="resaleList"></ul>
-      <button class="ghost block" id="moreResales" hidden>Show more</button>
+      <div class="collapse-body" data-body="resales">
+        <ul class="sales" id="resaleList"></ul>
+        <button class="ghost block" id="moreResales" hidden>Show more</button>
+      </div>
     </section>
 
     <section class="panel">
-      <div class="panel-head"><h2 id="tableTitle">By month</h2></div>
-      <div class="table-wrap"><table id="table"></table></div>
-      <button class="ghost block" id="tableMore" hidden></button>
-      <p class="hint" id="tableNote"></p>
+      <h2 class="collhead"><button type="button" class="collapser" data-key="table" aria-expanded="false"><span id="tableTitle">By month</span><span class="chev" aria-hidden="true"></span></button></h2>
+      <div class="collapse-body" data-body="table">
+        <div class="table-wrap"><table id="table"></table></div>
+        <button class="ghost block" id="tableMore" hidden></button>
+        <p class="hint" id="tableNote"></p>
+      </div>
     </section>
 
     <section class="panel" id="salesPanel" hidden>
-      <div class="panel-head"><h2 id="salesTitle">Sales</h2></div>
-      <ul class="sales" id="salesList"></ul>
-      <button class="ghost block" id="moreSales" hidden>Show more</button>
+      <h2 class="collhead"><button type="button" class="collapser" data-key="sales" aria-expanded="false"><span id="salesTitle">Sales</span><span class="chev" aria-hidden="true"></span></button></h2>
+      <div class="collapse-body" data-body="sales">
+        <ul class="sales" id="salesList"></ul>
+        <button class="ghost block" id="moreSales" hidden>Show more</button>
+      </div>
     </section>
   </main>
 
