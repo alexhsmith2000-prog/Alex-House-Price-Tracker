@@ -57,8 +57,19 @@ jobs:
           git pull --rebase origin "${{ github.ref_name }}"
           git push origin "HEAD:${{ github.ref_name }}"
 
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run the app's automated checks
+        run: node --test tests/*.test.mjs
+
   deploy:
-    needs: address-locations
+    needs: [address-locations, tests]   # nothing is published if a check fails
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -69,7 +80,7 @@ jobs:
           ref: ${{ github.ref_name }}   # includes any data commit made above
       - uses: actions/configure-pages@v5
       - name: Remove files the app does not need
-        run: rm -rf .github scripts data/sales_db.csv.gz
+        run: rm -rf .github scripts tests data/sales_db.csv.gz
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .

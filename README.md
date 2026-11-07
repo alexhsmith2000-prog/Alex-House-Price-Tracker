@@ -112,6 +112,14 @@ and a daily run uses about 1–2 minutes. The Valuer General data is free.
 
 ## Files
 
-`index.html`, `styles.css`, `app.js` make up the app (plain HTML/CSS/JS, no build step). `sw.js` and
-`manifest.webmanifest` provide offline use and home-screen install (bump `VERSION` in `sw.js` after changing
-app files). `scripts/build_geo.py` builds the map positions on GitHub. `data/` holds the sales data.
+- `index.html`, `styles.css`: the page and its styles.
+- `js/`: the app, split by area. The files load in order (see the bottom of `index.html`) and share one scope:
+  `core.js` (settings, reference data, helpers), `sales-data.js` (sold-sales store and filtering), `geo.js` (map positions),
+  `idb.js`, `import-sales.js` (Valuer General files), `screen.js`, `charts.js`, `flood.js`, `listings.js`,
+  `listing-insights.js`, `market.js`, `resales.js`, `maps.js`, `filters.js`, `listing-entry.js`, `menu.js`, and `main.js` (start-up).
+- `sw.js` + `manifest.webmanifest`: offline use and home-screen install. Bump `VERSION` in `sw.js`, `APP_VERSION` in
+  `js/core.js` and `version.json` together when app files change.
+- `tests/`: automated checks for the file readers (sales files, council flood PDFs, alert emails) and price maths, using
+  made-up sample data. Run `node --test tests/*.test.mjs` (Node 22). GitHub runs them before every publish and won't
+  publish if one fails.
+- `scripts/build_geo.py`: builds the map positions on GitHub.

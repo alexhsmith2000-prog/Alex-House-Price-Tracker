@@ -342,6 +342,23 @@ Ballina,2026-09,989000,142,Domain</pre>
 
   <div class="toast" id="toast" role="status" hidden></div>
   <script src="vendor/leaflet/leaflet.js"></script>
-  <script src="app.js"></script>
+  <!-- The app is split into files that load in this order and share one scope. -->
+  <script src="js/core.js"></script>
+  <script src="js/sales-data.js"></script>
+  <script src="js/geo.js"></script>
+  <script src="js/idb.js"></script>
+  <script src="js/import-sales.js"></script>
+  <script src="js/screen.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/flood.js"></script>
+  <script src="js/listings.js"></script>
+  <script src="js/listing-insights.js"></script>
+  <script src="js/market.js"></script>
+  <script src="js/resales.js"></script>
+  <script src="js/maps.js"></script>
+  <script src="js/filters.js"></script>
+  <script src="js/listing-entry.js"></script>
+  <script src="js/menu.js"></script>
+  <script src="js/main.js"></script>
 </body>
 </html>
