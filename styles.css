@@ -335,3 +335,25 @@ h2.collhead { margin: 0; }
 #listingBeds .seg-label { align-self: center; padding: 0 6px 0 8px; font-size: .78rem; color: var(--muted); }
 #listingPanel #listingSummary { margin: 8px 0 0; }
 .floodrow[hidden] { display: none; }
+
+/* ---- v23: listing analytics ---- */
+.seg.wrap { flex-wrap: wrap; }
+.lstatus { font-size: .8rem; font-weight: 600; color: var(--muted); }
+.lstatus.sold { color: var(--text); }
+.lstatus.sold .down { color: var(--down); } .lstatus.sold .up { color: var(--up); }
+.lstatus.stale { color: var(--down); }
+.lmeta { font-size: .8rem; color: var(--muted); }
+.lmeta .down { color: var(--down); font-weight: 600; } .lmeta .up { color: var(--up); font-weight: 600; }
+.lnote { font-size: .82rem; font-style: italic; }
+.lactions { display: flex; gap: 16px; align-items: baseline; }
+.starbtn { border: 0; background: none; font-size: 1.3rem; line-height: 1; padding: 0 0 0 10px; color: var(--muted); cursor: pointer; }
+.starbtn.on { color: var(--s3); }
+.srow { align-items: baseline; }
+.cards.market { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cards.market .card:first-child { grid-column: auto; }
+.cards.market .value { font-size: 1.15rem; }
+.subhead { font-size: .9rem; margin: 6px 0 0; }
+.barchart { width: 100%; height: 190px; }
+.barchart svg { width: 100%; height: 100%; display: block; }
+.barchart text { fill: var(--muted); font-size: 10px; }
+#marketPanel .legend i { width: 12px; }

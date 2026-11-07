@@ -30,6 +30,11 @@
     <button class="primary small" id="updateBtn">Update now</button>
   </div>
 
+  <div class="updatebar" id="watchBar" hidden>
+    <span id="watchText"></span>
+    <button class="primary small" id="watchOk">Got it</button>
+  </div>
+
   <nav class="chips" id="viewChips" aria-label="Saved searches"></nav>
 
   <main>
@@ -67,9 +72,21 @@
       <h2 class="collhead"><button type="button" class="collapser" data-key="listings" aria-expanded="false"><span id="listingTitle">For sale now</span><span class="chev" aria-hidden="true"></span></button></h2>
       <p class="hint" id="listingSummary"></p>
       <div class="collapse-body" data-body="listings">
+        <div class="seg small wrap" id="listingShow" role="tablist" aria-label="Which listings"></div>
         <div class="seg small" id="listingBeds" role="tablist" aria-label="Bedrooms"></div>
         <ul class="sales" id="listingList"></ul>
         <button class="ghost block" id="moreListings" hidden>Show more</button>
+      </div>
+    </section>
+
+    <section class="panel" id="marketPanel" hidden>
+      <h2 class="collhead"><button type="button" class="collapser" data-key="market" aria-expanded="false"><span>Market activity</span><span class="chev" aria-hidden="true"></span></button></h2>
+      <div class="collapse-body" data-body="market">
+        <div class="cards market" id="marketCards"></div>
+        <h3 class="subhead">Listed vs sold each month</h3>
+        <div id="listedSoldChart" class="barchart"></div>
+        <div class="legend" id="listedSoldLegend"></div>
+        <p class="hint" id="marketNote"></p>
       </div>
     </section>
 

@@ -90,6 +90,13 @@ flags), bedrooms, bathrooms and car spaces are kept on the phone; importing agai
 price changes. Searches get a **For sale now** section and hollow map markers, and when a listed home later appears
 in the Valuer General sales it shows bedrooms/bathrooms and how far the sale was over or under the asking price.
 
+Each listing also shows: its previous sale and the change to today's asking price; comparable recent sales (same
+suburb and kind, nearby, similar land when known); flood exposure from the council floor-level list; days on market;
+price cuts; and whether it has sold (and for how much against asking). Listings can be starred and given notes;
+a banner reports price changes and sales of starred homes. Each search gets a **Market activity** section (days on
+market, sold vs asking, sold above the range, price cuts, new listings a week, months of supply, stale listings) and a
+**Listed vs sold each month** chart, and the main chart gains a median asking price line.
+
 ## Put it on your phone
 
 1. In the GitHub repo go to **Settings → Pages** and set **Source** to **GitHub Actions**.
