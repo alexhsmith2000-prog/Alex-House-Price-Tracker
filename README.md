@@ -82,6 +82,14 @@ Charts can show straight-line trends (fitted to the log of the median, so the sl
 the last 3 and 6 months and 1, 3 and 5 years (each switched on or off under the chart), leaving out the incomplete recent months. In Compare, each search gets one trend
 over the range shown.
 
+## Listings from property alert emails
+
+**⋯ → Import a property alert email (PDF)** reads a Domain "Home Alert" email saved as a PDF (Gmail: ⋯ → Print →
+pinch out → Share → Save to Files). Each listing's address, advertised price (ranges, price guides, "new price"
+flags), bedrooms, bathrooms and car spaces are kept on the phone; importing again updates listings and records
+price changes. Searches get a **For sale now** section and hollow map markers, and when a listed home later appears
+in the Valuer General sales it shows bedrooms/bathrooms and how far the sale was over or under the asking price.
+
 ## Put it on your phone
 
 1. In the GitHub repo go to **Settings → Pages** and set **Source** to **GitHub Actions**.

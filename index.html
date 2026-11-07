@@ -63,6 +63,16 @@
       <p class="hint" id="mapNote"></p>
     </section>
 
+    <section class="panel" id="listingPanel" hidden>
+      <h2 class="collhead"><button type="button" class="collapser" data-key="listings" aria-expanded="false"><span id="listingTitle">For sale now</span><span class="chev" aria-hidden="true"></span></button></h2>
+      <p class="hint" id="listingSummary"></p>
+      <div class="collapse-body" data-body="listings">
+        <div class="seg small" id="listingBeds" role="tablist" aria-label="Bedrooms"></div>
+        <ul class="sales" id="listingList"></ul>
+        <button class="ghost block" id="moreListings" hidden>Show more</button>
+      </div>
+    </section>
+
     <section class="panel" id="resalePanel" hidden>
       <h2 class="collhead"><button type="button" class="collapser" data-key="resales" aria-expanded="false"><span>Resales: same home, sold twice</span><span class="chev" aria-hidden="true"></span></button></h2>
       <p class="hint" id="resaleSummary"></p>
@@ -249,6 +259,13 @@
         </div>
       </details>
       <button class="ghost danger block" id="clearImported">Delete imported sales</button>
+      <hr>
+      <h2>Listings (from your alert emails)</h2>
+      <p class="hint" id="listingStatus"></p>
+      <label class="ghost block file">Import a property alert email (PDF)
+        <input type="file" id="importListings" accept=".pdf,application/pdf" multiple>
+      </label>
+      <button class="ghost danger block" id="clearListings">Delete listings</button>
       <hr>
       <h2>Flood levels</h2>
       <p class="hint" id="floodStatus"></p>

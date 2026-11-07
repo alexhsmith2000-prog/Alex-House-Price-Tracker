@@ -326,3 +326,12 @@ h2.collhead { margin: 0; }
 .collapse-body { display: grid; gap: 10px; margin-top: 10px; }
 .collapse-body[hidden] { display: none; }
 #resalePanel #resaleSummary { margin: 8px 0 0; }
+
+/* ---- v22: listings from alert emails ---- */
+.pricechg { font-size: .8rem; font-weight: 600; color: var(--accent); }
+.asked { font-size: .82rem; font-weight: 600; }
+.asked .down { color: var(--down); } .asked .up { color: var(--up); }
+.legend i.ring { width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--accent); background: var(--surface); box-sizing: border-box; }
+#listingBeds .seg-label { align-self: center; padding: 0 6px 0 8px; font-size: .78rem; color: var(--muted); }
+#listingPanel #listingSummary { margin: 8px 0 0; }
+.floodrow[hidden] { display: none; }
