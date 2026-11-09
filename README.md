@@ -97,6 +97,18 @@ a banner reports price changes and sales of starred homes. Each search gets a **
 market, sold vs asking, sold above the range, price cuts, new listings a week, months of supply, stale listings) and a
 **Listed vs sold each month** chart, and the main chart gains a median asking price line.
 
+### Automatic alert feed (Gmail → the app)
+
+Alert emails can come in by themselves: any number of saved searches, for sale and sold, from Domain or
+realestate.com.au. A small Google Apps Script (`scripts/gmail-alert-collector.gs`) runs **in your own Google
+account** every hour. It picks up emails your Gmail filter has labelled **NR Prices**, saves a PDF copy of each to the
+Drive folder **NR Prices alert emails**, keeps their text in the Sheet **NR Prices alert feed**, and labels them
+**NR Prices/Collected**. When the app opens (and when it comes back on screen, at most once an hour) it fetches new
+emails from the script's private link and reads them. For-sale alerts add or update listings; sold alerts mark
+homes as sold with the price straight away, weeks before the Valuer General record arrives. Emails are never read
+twice. Setup steps are in the app under **⋯ → Listings → Automatic alert feed**. Keep the script's link private,
+because it includes the key that protects your feed.
+
 ## Put it on your phone
 
 1. In the GitHub repo go to **Settings → Pages** and set **Source** to **GitHub Actions**.
@@ -116,10 +128,11 @@ and a daily run uses about 1–2 minutes. The Valuer General data is free.
 - `js/`: the app, split by area. The files load in order (see the bottom of `index.html`) and share one scope:
   `core.js` (settings, reference data, helpers), `sales-data.js` (sold-sales store and filtering), `geo.js` (map positions),
   `idb.js`, `import-sales.js` (Valuer General files), `screen.js`, `charts.js`, `flood.js`, `listings.js`,
-  `listing-insights.js`, `market.js`, `resales.js`, `maps.js`, `filters.js`, `listing-entry.js`, `menu.js`, and `main.js` (start-up).
+  `listing-insights.js`, `alert-feed.js`, `market.js`, `resales.js`, `maps.js`, `filters.js`, `listing-entry.js`, `menu.js`, and `main.js` (start-up).
 - `sw.js` + `manifest.webmanifest`: offline use and home-screen install. Bump `VERSION` in `sw.js`, `APP_VERSION` in
   `js/core.js` and `version.json` together when app files change.
 - `tests/`: automated checks for the file readers (sales files, council flood PDFs, alert emails) and price maths, using
   made-up sample data. Run `node --test tests/*.test.mjs` (Node 22). GitHub runs them before every publish and won't
   publish if one fails.
 - `scripts/build_geo.py`: builds the map positions on GitHub.
+- `scripts/gmail-alert-collector.gs`: the Google Apps Script for the automatic alert feed (you paste it into your own Google account; it isn't published with the app).

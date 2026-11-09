@@ -7,16 +7,16 @@ function renderMarket(v, list, infos) {
   const panel = $('#marketPanel');
   panel.hidden = false;
   const iof = (r) => infos.get(listingKey(r.suburb, r.street, r.num, r.unit)) || {};
-  const sold = list.filter((r) => iof(r).sold != null);
+  const sold = list.filter((r) => iof(r).isSold && !r.soldOnly && iof(r).soldPrice); // sold, with an asking price to compare
   const pct = (x) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}%`;
-  const diffs = sold.map((r) => { const ref = askMid(askOf(r)); return ref ? (C.price[iof(r).sold] - ref) / ref : null; }).filter((x) => x != null);
-  const firstDiffs = sold.map((r) => { const f = askMid(r.prices[0]); return f ? (C.price[iof(r).sold] - f) / f : null; }).filter((x) => x != null);
+  const diffs = sold.map((r) => { const ref = askMid(askOf(r)); return ref ? (iof(r).soldPrice - ref) / ref : null; }).filter((x) => x != null);
+  const firstDiffs = sold.map((r) => { const f = askMid(r.prices[0]); return f ? (iof(r).soldPrice - f) / f : null; }).filter((x) => x != null);
   const ranges = sold.filter((r) => { const a = askOf(r); return a.low != null && a.high > a.low; });
-  const overTop = ranges.filter((r) => C.price[iof(r).sold] > askOf(r).high).length;
+  const overTop = ranges.filter((r) => iof(r).soldPrice > askOf(r).high).length;
   const doms = sold.map((r) => iof(r).dom).filter((x) => x != null);
   const cuts = list.filter((r) => iof(r).cut);
   const cutDays = cuts.map((r) => Math.round(dayNum(iof(r).cut.d) - dayNum(r.firstSeen)));
-  const active = list.filter((r) => iof(r).sold == null && iof(r).age <= 180);
+  const active = list.filter((r) => !iof(r).isSold && iof(r).age <= 180);
   const stale = list.filter((r) => iof(r).stale);
   // new listings per week (last 4 weeks)
   const t = today(), wk = list.filter((r) => dayNum(t) - dayNum(r.firstSeen) <= 28).length / 4;
@@ -77,6 +77,7 @@ function askedEl(i) {
   const ref = askMid(last);
   const diff = ref ? (pr - ref) / ref : null;
   const info = listingInfo().get(listingKey(r.suburb, r.street, r.num, r.unit)) || {};
+  if (!r.prices.length) return featText(r) ? el('div', { class: 'asked' }, `${featText(r)} (from your sold alert)`) : null; // known only from a sold alert
   return el('div', { class: 'asked' }, `${featText(r)}${featText(r) ? ' · ' : ''}asked ${fmtAsk(last)}${first !== last && first.low != null ? ` (first ${fmtAsk(first)})` : ''}${info.dom != null ? ` · ${info.dom} days on market` : ''}`,
     diff != null ? el('span', { class: diff < 0 ? 'down' : 'up' }, ` · sold ${Math.abs(diff * 100).toFixed(1)}% ${diff < 0 ? 'under' : 'over'}`) : null);
 }

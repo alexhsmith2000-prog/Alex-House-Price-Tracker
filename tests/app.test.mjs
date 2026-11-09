@@ -2,9 +2,11 @@
 // council flood PDFs and property alert emails, and the price maths. Run with:  node --test tests/
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadApp, fixture } from './load-app.mjs';
+import { loadApp, loadCollector, fixture } from './load-app.mjs';
 
 const app = loadApp();
+// values made inside the sandbox have their own Array/Object types: compare plain copies
+const plain = (x) => JSON.parse(JSON.stringify(x));
 
 test('month and price helpers', () => {
   assert.equal(app('addMonths')('2025-11', 3), '2026-02');
@@ -141,4 +143,63 @@ test('trend line: steady 5% a year comes back as 5% a year', () => {
   for (let i = 0; i < 36; i++) pts.push({ month: app('addMonths')('2019-01', i), v: 500000 * Math.pow(1.05, i / 12) });
   const f = app('fitTrend')(pts, '2019-01', '2021-12', 6);
   assert.ok(Math.abs(f.yearly - 0.05) < 0.0005, `got ${f.yearly}`);
+});
+
+test('collector: email HTML becomes one line per row, cells joined, entities decoded', () => {
+  const htmlToLines = loadCollector()('htmlToLines');
+  const html = `<html><head><style>.x{}</style></head><body><table>
+    <tr><td>$529,000&nbsp;-&nbsp;$549,000</td></tr>
+    <tr><td><a href="#">123 Sample Street, Lismore</a></td><td>Details</td></tr>
+    <tr><td><img src="bed.png">3 beds</td><td>2 baths</td><td>1 car</td></tr>
+    <tr><td>Tom &amp; Jo&#39;s Realty</td></tr></table><p>Line one<br>Line two</p></body></html>`;
+  assert.deepEqual(plain(htmlToLines(html)), ['$529,000 - $549,000', '123 Sample Street, Lismore Details', '3 beds 2 baths 1 car', 'Tom & Jo’s Realty', 'Line one', 'Line two']);
+});
+
+test('alert email: bedrooms, bathrooms and cars split over separate lines', () => {
+  app("LOC_COUNTS = new Map([['LISMORE', { pc: '2480', n: 1 }], ['CASINO', { pc: '2470', n: 1 }]])");
+  const { listings } = app('parseAlertLines')([
+    'Home Alert Mon, 09 Nov 2026',
+    '$650,000', '12 Sample Street, Casino', '4', 'beds', '4 beds', '2 baths', '1 car',
+    '$480,000', '7 Example Road, Lismore', '3 beds', '1 bath', // no car line, next listing follows
+    '$520,000', '9 Test Avenue, Lismore', '3 beds 2 baths',
+  ]);
+  assert.equal(listings.length, 3);
+  assert.deepEqual(plain(listings.map((l) => [l.num, l.beds, l.baths, l.cars])), [['12', 4, 2, 1], ['7', 3, 1, null], ['9', 3, 2, null]]);
+});
+
+test('sold alert: recognised as sold, with sold price and date', () => {
+  app("LOC_COUNTS = new Map([['LISMORE', { pc: '2480', n: 1 }]])");
+  const parsed = app('parseAlertLines')([
+    'Sold Alert Tue, 10 Nov 2026',
+    'Here are properties that have recently sold',
+    'SOLD $512,000', '15 Sample Street, Lismore', '3 beds 1 bath 1 car',
+    'Sold 03 Nov 2026 Price withheld', '2/40 Example Road, Lismore', '2 beds 1 bath 1 car',
+  ], 'Sold properties in Lismore');
+  assert.equal(parsed.kind, 'sold');
+  assert.equal(parsed.listings.length, 2);
+  const [a, b] = parsed.listings;
+  assert.ok(a.sold && b.sold);
+  assert.equal(app('parseAsking')(a.priceText).low, 512000);
+  assert.equal(b.soldDate, 20261103);
+  assert.equal(b.unit, '2');
+});
+
+test('importing alerts: price history, sold reports, no duplicates', () => {
+  app("LOC_COUNTS = new Map([['CASINO', { pc: '2470', n: 1 }]])");
+  const data = app("({ recs: {}, files: [] })");
+  const ingest = app('ingestAlert'), parse = app('parseAlertLines');
+  ingest(data, parse(['Home Alert Mon, 02 Nov 2026', '$650,000', '12 Sample Street, Casino', '4 beds 2 baths 1 car']));
+  ingest(data, parse(['Home Alert Mon, 02 Nov 2026', '$650,000', '12 Sample Street, Casino', '4 beds 2 baths 1 car'])); // same email again
+  ingest(data, parse(['Home Alert Mon, 09 Nov 2026', 'NEW PRICE $615,000', '12 Sample Street, Casino', '4 beds 2 baths 1 car']));
+  let r = data.recs['CASINO|SAMPLE ST|12|'];
+  assert.equal(Object.keys(data.recs).length, 1);
+  assert.deepEqual(plain(r.prices.map((p) => p.low)), [650000, 615000]);
+  assert.equal(r.firstSeen, 20261102);
+  ingest(data, parse(['Sold Alert Mon, 30 Nov 2026', 'SOLD $600,000', '12 Sample Street, Casino', '4 beds 2 baths 1 car'], 'Sold properties'));
+  r = data.recs['CASINO|SAMPLE ST|12|'];
+  assert.equal(r.soldAlert.price, 600000);
+  assert.equal(r.prices.length, 2, 'the sold report does not change the asking history');
+  ingest(data, parse(['Sold Alert Mon, 30 Nov 2026', 'SOLD $455,000', '3 Other Street, Casino', '3 beds 1 bath 1 car'], 'Sold properties'));
+  const s = data.recs['CASINO|OTHER ST|3|'];
+  assert.ok(s.soldOnly && s.prices.length === 0 && s.beds === 3);
 });

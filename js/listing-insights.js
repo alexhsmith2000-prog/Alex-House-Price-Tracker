@@ -39,14 +39,22 @@ function listingInfo() {
     const isUnit = !!r.unit;
     const fit = (i) => !!C.strata[i] === isUnit || !isUnit; // houses: any record at that number; units: strata only
     // sold: a sale from about two weeks before first seen onwards
-    const after = sales.filter((i) => fit(i) && C.d[i] >= ymdAdd(r.firstSeen, -14));
+    // homes known only from a sold alert: the contract can be a few weeks before the alert
+    const after = sales.filter((i) => fit(i) && C.d[i] >= ymdAdd(r.firstSeen, r.soldOnly ? -75 : -14));
     let sold = null;
     if (after.length) {
       const ref = askMid(askOf(r));
       sold = isUnit && ref ? after.reduce((b, i) => (Math.abs(C.price[i] - ref) < Math.abs(C.price[b] - ref) ? i : b), after[0]) : after[0];
       if (isUnit && ref && Math.abs(C.price[sold] - ref) / ref > 0.35) sold = null; // units: only when the price is plausible
     }
-    if (sold != null) { info.sold = sold; const dd = Math.round(dayNum(C.d[sold]) - dayNum(r.firstSeen)); info.dom = dd > 0 ? dd : null; SALE_LISTING.set(sold, r); } // sold before it reached your alerts: days unknown
+    if (sold != null) { info.sold = sold; const dd = Math.round(dayNum(C.d[sold]) - dayNum(r.firstSeen)); info.dom = dd > 0 && !r.soldOnly ? dd : null; SALE_LISTING.set(sold, r); } // sold before it reached your alerts: days unknown
+    else if (r.soldAlert) { // reported sold in an alert; the official record follows weeks later
+      info.reported = r.soldAlert;
+      const dd = Math.round(dayNum(r.soldAlert.d) - dayNum(r.firstSeen));
+      info.dom = dd > 0 && !r.soldOnly ? dd : null;
+    }
+    info.isSold = info.sold != null || !!info.reported;
+    info.soldPrice = info.sold != null ? C.price[info.sold] : (info.reported && info.reported.price) || null;
     // earlier sale of the same home (houses only: the records don't say which unit)
     if (!isUnit) {
       const before = sales.filter((i) => C.d[i] < ymdAdd(r.firstSeen, -14));
@@ -62,7 +70,7 @@ function listingInfo() {
     info.relisted = !!r.relisted;
     lastSeenByAddr.set(`${addr}|${r.unit}`, r.lastSeen);
     info.age = Math.round(dayNum(today()) - dayNum(r.firstSeen));
-    info.stale = info.sold == null && info.age >= 90;
+    info.stale = !info.isSold && !r.soldOnly && info.age >= 90;
     // flood (council floor-level list)
     const fr = FLOOD && FLOOD.recs ? FLOOD.recs[`${r.suburb}|${normStreet(r.street)}|${r.num}`] : null;
     info.flood = fr ? fr[0] - fr[1] : null;
@@ -114,10 +122,10 @@ function renderListings() {
   let list = listingsFor(v);
   if (v.flood) list = list.filter((r) => { const fd = infos.get(listingKey(r.suburb, r.street, r.num, r.unit))?.flood; if (fd == null) return v.flood === 'unknown'; return v.flood === 'unknown' ? false : (v.flood === 'above' ? fd >= 0 : v.flood === 'below' ? fd < 0 : v.flood === 'below1' ? fd < -1 : v.flood === 'below2022' ? overEvent(fd, 2022) < 0 : v.flood === 'above2022' ? overEvent(fd, 2022) >= 0 : v.flood === 'below2017' ? overEvent(fd, 2017) < 0 : overEvent(fd, 2022) < 0 && overEvent(fd, 2017) >= 0); });
   const infoOf = (r) => infos.get(listingKey(r.suburb, r.street, r.num, r.unit)) || { r };
-  const forSale = list.filter((r) => infoOf(r).sold == null);
+  const forSale = list.filter((r) => !infoOf(r).isSold);
   $('#listingTitle').textContent = `For sale now (${forSale.length.toLocaleString('en-AU')})`;
   const show = prefs.listShow;
-  let shown = show === 'sold' ? list.filter((r) => infoOf(r).sold != null)
+  let shown = show === 'sold' ? list.filter((r) => infoOf(r).isSold)
     : show === 'starred' ? list.filter((r) => r.starred)
     : show === 'cuts' ? list.filter((r) => infoOf(r).cut)
     : show === 'stale' ? list.filter((r) => infoOf(r).stale)
@@ -146,6 +154,11 @@ function listingItem(r, info) {
   if (info.sold != null) {
     const ref = askMid(p), pr = C.price[info.sold], diff = ref ? (pr - ref) / ref : null;
     lines.push(el('div', { class: 'lstatus sold' }, `SOLD ${fmtDate(C.d[info.sold])} for ${fmtMoney(pr)}`, diff != null ? el('span', { class: diff < 0 ? 'down' : 'up' }, ` · ${Math.abs(diff * 100).toFixed(1)}% ${diff < 0 ? 'under' : 'over'} asking`) : '', info.dom != null ? ` · ${info.dom} days on market` : ' · sold around when it first appeared in your alerts'));
+  } else if (info.reported) {
+    const ref = askMid(p), pr = info.reported.price, diff = ref && pr ? (pr - ref) / ref : null;
+    lines.push(el('div', { class: 'lstatus sold' }, `SOLD ${fmtDate(info.reported.d)} ${pr ? `for ${fmtMoney(pr)}` : `(${info.reported.text || 'price not shown'})`}`,
+      diff != null ? el('span', { class: diff < 0 ? 'down' : 'up' }, ` · ${Math.abs(diff * 100).toFixed(1)}% ${diff < 0 ? 'under' : 'over'} asking`) : '',
+      info.dom != null ? ` · ${info.dom} days on market` : '', ' · from your sold alert; the official record follows in 4–8 weeks'));
   } else {
     lines.push(el('div', { class: `lstatus${info.stale ? ' stale' : ''}` }, `${info.stale ? 'Stale: ' : 'On market '}${info.age} days${info.stale ? ' and not sold' : ''}${r.relisted ? ' · relisted' : ''}`));
   }
@@ -166,7 +179,7 @@ function listingItem(r, info) {
   if (fl) lines.push(el('div', { class: `flood ${info.flood >= 0 ? 'dry' : 'wet'}` }, fl));
   if (r.note) lines.push(el('div', { class: 'lnote' }, `Note: ${r.note}`));
   const star = el('button', { type: 'button', class: `starbtn${r.starred ? ' on' : ''}`, 'aria-label': r.starred ? 'Remove from watchlist' : 'Add to watchlist', onclick: async () => {
-    r.starred = !r.starred; if (r.starred) r.watch = { prices: r.prices.length, sold: info.sold != null };
+    r.starred = !r.starred; if (r.starred) r.watch = { prices: r.prices.length, sold: !!info.isSold };
     await saveListings(); renderListings();
   } }, r.starred ? '★' : '☆');
   const noteBtn = el('button', { type: 'button', class: 'link', onclick: async () => {
@@ -175,7 +188,7 @@ function listingItem(r, info) {
     r.note = t.trim() || undefined; await saveListings(); renderListings();
   } }, r.note ? 'Edit note' : 'Add note');
   return el('li', { 'data-key': key },
-    el('div', { class: 'srow' }, el('b', {}, fmtAsk(p)), el('span', { class: 'sdate' }, `seen ${fmtDate(r.firstSeen)}`), star),
+    el('div', { class: 'srow' }, el('b', {}, r.soldOnly ? (info.soldPrice ? fmtMoney(info.soldPrice) : 'Sold') : fmtAsk(p)), el('span', { class: 'sdate' }, r.soldOnly ? 'sold' : `seen ${fmtDate(r.firstSeen)}`), star),
     el('div', { class: 'sline' }, listingAddr(r)),
     el('div', { class: 'smeta' }, [featText(r), r.unit ? 'Unit / townhouse' : ''].filter(Boolean).join(' · ')),
     ...lines,
@@ -191,7 +204,7 @@ function watchNews() {
     const w = r.watch || { prices: r.prices.length, sold: false };
     const info = infos.get(key) || {};
     if (r.prices.length > w.prices) news.push(`${listingAddr(r)}: price now ${fmtAsk(askOf(r))}`);
-    if (info.sold != null && !w.sold) news.push(`${listingAddr(r)}: sold for ${fmtShort(C.price[info.sold])}`);
+    if (info.isSold && !w.sold) news.push(`${listingAddr(r)}: sold${info.soldPrice ? ` for ${fmtShort(info.soldPrice)}` : ''}`);
   }
   return news;
 }
@@ -204,6 +217,6 @@ function renderWatchBar() {
 }
 $('#watchOk').addEventListener('click', async () => {
   const infos = listingInfo();
-  for (const [key, r] of Object.entries(LISTINGS.recs)) if (r.starred) r.watch = { prices: r.prices.length, sold: (infos.get(key) || {}).sold != null };
+  for (const [key, r] of Object.entries(LISTINGS.recs)) if (r.starred) r.watch = { prices: r.prices.length, sold: !!(infos.get(key) || {}).isSold };
   await saveListings(); renderWatchBar();
 });

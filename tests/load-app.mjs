@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Only the files with no start-up screen work; their order matches index.html.
-const FILES = ['core', 'sales-data', 'geo', 'idb', 'import-sales', 'charts', 'flood', 'listings'];
+const FILES = ['core', 'sales-data', 'geo', 'idb', 'import-sales', 'charts', 'flood', 'listings', 'resales'];
 
 export function loadApp() {
   // a do-nothing stand-in for page elements, enough for code that only wires up buttons
@@ -26,3 +26,11 @@ export function loadApp() {
   return (expr) => vm.runInContext(expr, sandbox);
 }
 export const fixture = (name) => fs.readFileSync(path.join(root, 'tests', 'fixtures', name));
+
+// The Google Apps Script that collects alert emails (plain JavaScript, so it runs here too)
+export function loadCollector() {
+  const sandbox = {};
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(root, 'scripts', 'gmail-alert-collector.gs'), 'utf8'), sandbox, { filename: 'gmail-alert-collector.gs' });
+  return (expr) => vm.runInContext(expr, sandbox);
+}

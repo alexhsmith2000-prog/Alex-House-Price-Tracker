@@ -76,7 +76,7 @@ function renderCards() {
     box.className = 'cards compare';
     box.append(el('div', { class: 'card wide' }, el('div', { class: 'label' }, 'No sold prices yet'),
       el('div', { class: 'delta' }, 'Import the NSW Valuer General sales files your iPhone Shortcut downloads.'),
-      el('button', { class: 'primary', style: 'margin-top:10px', onclick: () => { renderImportStatus(); $('#menuDialog').showModal(); } }, 'Import sales files')));
+      el('button', { class: 'primary', style: 'margin-top:10px', onclick: () => $('#menuBtn').click() }, 'Import sales files')));
     return;
   }
   const end = addMonths(thisMonth(), -1);

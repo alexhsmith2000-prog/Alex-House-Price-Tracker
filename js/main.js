@@ -3,7 +3,7 @@
 'use strict';
 
 render();
-loadSales();
+loadSales().then(() => syncFeed({ quiet: true })); // then fetch any new alert emails
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
 
 // Is a newer version published? Offer a one-tap update (iPhones keep old copies of home-screen apps).

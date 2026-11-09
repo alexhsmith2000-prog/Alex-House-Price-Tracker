@@ -357,3 +357,8 @@ h2.collhead { margin: 0; }
 .barchart svg { width: 100%; height: 100%; display: block; }
 .barchart text { fill: var(--muted); font-size: 10px; }
 #marketPanel .legend i { width: 12px; }
+
+/* ---- v25: alert feed ---- */
+.steps-list { padding-left: 20px; margin: 6px 0; font-size: .85rem; display: grid; gap: 6px; }
+.steps-list code { font-size: .78rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 3px; word-break: break-all; }
+#feedConnected[hidden], #feedSetup[hidden] { display: none; }

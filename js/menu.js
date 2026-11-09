@@ -4,7 +4,7 @@
 
 // ---------- menu: import / export ----------
 const menu = $('#menuDialog');
-$('#menuBtn').addEventListener('click', () => { renderImportStatus(); renderFloodStatus(); renderListingStatus(); menu.showModal(); });
+$('#menuBtn').addEventListener('click', () => { renderImportStatus(); renderFloodStatus(); renderListingStatus(); renderFeedStatus(); menu.showModal(); });
 $('#importFlood').addEventListener('change', async (ev) => { const files = ev.target.files; await importFloodPdfs(files); ev.target.value = ''; });
 $('#importListings').addEventListener('change', async (ev) => { const files = ev.target.files; await importListingPdfs(files); ev.target.value = ''; });
 $('#clearListings').addEventListener('click', async () => {
