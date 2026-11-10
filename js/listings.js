@@ -134,21 +134,60 @@ function renderListingStatus() {
     : 'No listings yet. Save a Domain alert email as a PDF (Gmail: ⋯ → Print → pinch out → Share → Save to Files) and import it here.';
 }
 // Which listings fit a search (area, locations, street, type, price, beds)
-const listingType = (r) => (r.unit ? 'unit' : 'house');
+// Kind of home: units from the address; otherwise from the Valuer General record of an earlier sale at the
+// same address (land size, zoning) when there is one, else 'house'.
+const listingType = (r, info) => (r.unit ? 'unit' : info && info.vgType && info.vgType !== 'land' ? info.vgType : 'house');
 const askOf = (r) => { const p = r.prices[r.prices.length - 1]; return p ? p : { text: '', low: null, high: null }; };
+const floodOk = (flood, fd) => {
+  if (fd == null) return flood === 'unknown';
+  switch (flood) {
+    case 'unknown': return false;
+    case 'above': return fd >= 0;
+    case 'below': return fd < 0;
+    case 'below1': return fd < -1;
+    case 'below2022': return overEvent(fd, 2022) < 0;
+    case 'above2022': return overEvent(fd, 2022) >= 0;
+    case 'below2017': return overEvent(fd, 2017) < 0;
+    case 'only2022': return overEvent(fd, 2022) < 0 && overEvent(fd, 2017) >= 0;
+    default: return true;
+  }
+};
+const suburbSpot = (name) => {
+  const pc = (LOC_COUNTS.get(name) || {}).pc;
+  const p = SUBURBS && ((pc && SUBURBS.pts[`${name}|${pc}`]) || SUBURBS.byName.get(name));
+  return p ? [p[0] / SUBURBS.scale, p[1] / SUBURBS.scale] : null;
+};
+// The search's filters applied to alert listings, the same way as to sales. What a listing can't tell us
+// (land size, no price shown, no map position) leaves it out when that filter is on.
 function listingsFor(v) {
   const area = areaOf(v.area);
   const locSet = v.locs && v.locs.length ? new Set(v.locs) : null;
   const streetQ = v.street ? normStreet(v.street) : null;
+  const infos = listingInfo();
+  const shape = v.shape || null;
+  const fine = shape && (shape.type === 'circle' ? shape.r <= 3000 : polyAreaKm2(shape.pts) <= 30);
+  const landOn = !!(v.landMin || v.landMax), landMin = v.landMin || 0, landMax = v.landMax || Infinity;
   return Object.values(LISTINGS.recs).filter((r) => {
     if (!r.prices) r.prices = [];
     const pc = (LOC_COUNTS.get(r.suburb) || {}).pc || (SUBURBS && [...Object.keys(SUBURBS.pts)].find((k) => k.startsWith(r.suburb + '|'))?.split('|')[1]);
     if (locSet ? !locSet.has(r.suburb) : (pc ? !areaHas(area, pc) : area.ranges)) return false;
-    if (v.types && v.types.length && !v.types.includes(listingType(r)) && !(listingType(r) === 'house' && v.types.some((t) => t === 'lifestyle' || t === 'farm'))) return false;
-    const a = askOf(r);
-    if (v.min && a.high != null && a.high < v.min) return false;
-    if (v.max && a.low != null && a.low > v.max) return false;
+    const info = infos.get(listingKey(r.suburb, r.street, r.num, r.unit)) || {};
+    if (v.types && v.types.length) {
+      if (!v.types.includes(listingType(r, info))) return false; // with no earlier sale on record, a house counts as in town
+    }
+    if (v.min || v.max) {
+      const a = r.soldOnly ? { low: info.soldPrice ?? null, high: info.soldPrice ?? null } : askOf(r);
+      if (a.low == null) return false; // no price shown
+      if (v.min && a.high < v.min) return false;
+      if (v.max && a.low > v.max) return false;
+    }
+    if (landOn && !(info.land >= landMin && info.land <= landMax)) return false;
     if (streetQ && !normStreet(r.street).startsWith(streetQ)) return false;
+    if (v.flood && !floodOk(v.flood, info.flood)) return false;
+    if (shape) {
+      const sp = listingSpot(r) || (!fine ? suburbSpot(r.suburb) : null);
+      if (!sp || !inShape(shape, sp[0], sp[1])) return false;
+    }
     return true;
   }).sort((x, y) => y.lastSeen - x.lastSeen || y.firstSeen - x.firstSeen);
 }

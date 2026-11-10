@@ -59,6 +59,9 @@ function listingInfo() {
     if (!isUnit) {
       const before = sales.filter((i) => C.d[i] < ymdAdd(r.firstSeen, -14));
       if (before.length) info.prev = before[before.length - 1];
+      // land size and kind of property from the latest record at this address
+      const rec = [...sales].reverse().find((i) => !C.strata[i]);
+      if (rec != null) { info.vgType = TYPE_IDS[DER.type[rec]]; if (C.area[rec] > 0) info.land = C.area[rec]; }
     }
     // price cuts
     const lows = r.prices.map((p) => p.low).filter((v) => v != null);
@@ -120,7 +123,6 @@ function renderListings() {
   panel.hidden = false;
   const infos = listingInfo();
   let list = listingsFor(v);
-  if (v.flood) list = list.filter((r) => { const fd = infos.get(listingKey(r.suburb, r.street, r.num, r.unit))?.flood; if (fd == null) return v.flood === 'unknown'; return v.flood === 'unknown' ? false : (v.flood === 'above' ? fd >= 0 : v.flood === 'below' ? fd < 0 : v.flood === 'below1' ? fd < -1 : v.flood === 'below2022' ? overEvent(fd, 2022) < 0 : v.flood === 'above2022' ? overEvent(fd, 2022) >= 0 : v.flood === 'below2017' ? overEvent(fd, 2017) < 0 : overEvent(fd, 2022) < 0 && overEvent(fd, 2017) >= 0); });
   const infoOf = (r) => infos.get(listingKey(r.suburb, r.street, r.num, r.unit)) || { r };
   const forSale = list.filter((r) => !infoOf(r).isSold);
   $('#listingTitle').textContent = `For sale now (${forSale.length.toLocaleString('en-AU')})`;
