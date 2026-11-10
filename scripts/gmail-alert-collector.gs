@@ -104,7 +104,7 @@ function doGet(e) {
 
 /** Run after deploying: shows the link to paste into the app (keep it private). */
 function showAppLink() {
-  const url = ScriptApp.getService().getUrl();
+  const url = (ScriptApp.getService().getUrl() || '').replace(/\/dev$/, '/exec'); // Google sometimes gives the editor-only /dev link
   if (!url) { Logger.log('Deploy the script as a web app first (Deploy → New deployment → Web app).'); return; }
   Logger.log(`Paste this into the app (⋯ → Listings → Connect automatic alert feed):\n${url}?key=${PropertiesService.getScriptProperties().getProperty('KEY')}`);
 }

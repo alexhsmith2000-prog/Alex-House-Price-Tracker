@@ -18,9 +18,14 @@ async function syncFeed({ quiet = false } = {}) {
   try {
     const u = new URL(cfg.url);
     u.searchParams.set('since', String(Math.max(0, (cfg.since || 0) - 6 * 3600e3))); // small overlap; emails are de-duplicated by id
-    const res = await fetch(u.toString(), { cache: 'no-store' });
-    if (!res.ok) throw new Error(`the feed answered ${res.status}`);
-    const j = await res.json();
+    let res;
+    try { res = await fetch(u.toString(), { cache: 'no-store' }); }
+    catch (e) { throw new Error('Google didn’t let the app in. In the script, Deploy → Manage deployments → ✏️ → Who has access must be “Anyone”, and the link must end in /exec?key=…'); }
+    if (!res.ok) throw new Error(`Google answered ${res.status}${res.status === 404 ? ' (no web app at that link; check it was copied in full and the deployment still exists)' : ''}`);
+    const body = await res.text();
+    let j;
+    try { j = JSON.parse(body); }
+    catch (e) { throw new Error(/sign ?in|accounts\.google/i.test(body) ? 'Google asked for a sign-in. Set Who has access to “Anyone” (Deploy → Manage deployments → ✏️), and use the /exec link, not /dev' : 'the link answered with a web page instead of your feed. Use the Web app link ending in /exec?key=…'); }
     if (!j.ok) throw new Error(j.error || 'the feed refused the request');
     const data = structuredClone(LISTINGS);
     const seen = new Set(data.feedSeen || []);
@@ -66,7 +71,7 @@ function renderFeedStatus() {
 }
 
 $('#feedConnect').addEventListener('click', async () => {
-  const url = $('#feedUrl').value.trim();
+  const url = $('#feedUrl').value.trim().replace(/\/dev(\?|$)/, '/exec$1'); // /dev links only work in the script editor
   if (!/^https:\/\/script\.google(usercontent)?\.com\/.+key=/.test(url)) return toast('That doesn’t look like your script’s link. It starts with https://script.google.com/ and ends with ?key=…');
   saveFeedCfg({ url });
   if (await syncFeed()) { $('#feedUrl').value = ''; return; }
@@ -74,7 +79,7 @@ $('#feedConnect').addEventListener('click', async () => {
   const err = feedCfg().lastError;
   safeSet(FEED_KEY, '{}');
   renderFeedStatus();
-  $('#feedStatus').textContent = `That link didn’t work (${String(err || '').replace(/^.*?: /, '')}). Check you copied the whole link from showAppLink, and that the deployment's access is “Anyone”.`;
+  $('#feedStatus').textContent = `That link didn’t work: ${String(err || '').replace(/^.*?(am|pm): /, '')}.`;
 });
 $('#feedSync').addEventListener('click', () => syncFeed());
 $('#feedDisconnect').addEventListener('click', () => {
