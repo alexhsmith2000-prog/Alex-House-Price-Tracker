@@ -7,6 +7,7 @@
  *   3. records the email's text in the Google Sheet "NR Prices alert feed",
  *   4. labels the email "NR Prices" and "NR Prices/Collected" (so it isn't collected twice) and, if ARCHIVE
  *      is true, archives it out of your inbox. Nothing is deleted.
+ * When the app checks for new emails it also asks the script to collect straight away.
  * The app then fetches new emails from this script's web address (protected by a secret key)
  * and reads the listings itself, so improvements to the reading happen in the app, not here.
  *
@@ -94,6 +95,14 @@ function doGet(e) {
   const key = PropertiesService.getScriptProperties().getProperty('KEY');
   const p = (e && e.parameter) || {};
   if (!key || p.key !== key) return json_({ ok: false, error: 'wrong or missing key' });
+  // the app asks for a fresh collection, so new emails show up without waiting for the hourly run
+  if (p.collect === '1') {
+    const last = Number(PropertiesService.getScriptProperties().getProperty('LAST_COLLECT') || 0);
+    if (Date.now() - last > 2 * 60e3) {
+      const lock = LockService.getScriptLock();
+      if (lock.tryLock(20000)) { try { collect(); } catch (err) { console.warn(`collect failed: ${err}`); } finally { lock.releaseLock(); } }
+    }
+  }
   const since = Number(p.since || 0);
   const sh = sheet_();
   const rows = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues() : [];

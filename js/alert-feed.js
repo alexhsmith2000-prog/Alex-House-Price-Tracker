@@ -20,6 +20,7 @@ async function syncFeed({ quiet = false } = {}) {
   try {
     const u = new URL(cfg.url);
     const reread = cfg.reader !== FEED_READER, before = !!cfg.since;
+    u.searchParams.set('collect', '1'); // newer scripts collect new emails first instead of waiting for the hourly run
     u.searchParams.set('since', reread ? '0' : String(Math.max(0, (cfg.since || 0) - 6 * 3600e3))); // small overlap; emails are de-duplicated by id
     let res;
     try { res = await fetch(u.toString(), { cache: 'no-store' }); }
