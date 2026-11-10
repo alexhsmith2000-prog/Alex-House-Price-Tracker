@@ -101,9 +101,11 @@ market, sold vs asking, sold above the range, price cuts, new listings a week, m
 
 Alert emails can come in by themselves: any number of saved searches, for sale and sold, from Domain or
 realestate.com.au. A small Google Apps Script (`scripts/gmail-alert-collector.gs`) runs **in your own Google
-account** every hour. It picks up emails your Gmail filter has labelled **NR Prices**, saves a PDF copy of each to the
+account** every hour. It finds alert emails from domain.com.au and realestate.com.au (the `SENDERS` list at the top; anything you
+label **NR Prices** by hand is included too), saves a PDF copy of each to the
 Drive folder **NR Prices alert emails**, keeps their text in the Sheet **NR Prices alert feed**, and labels them
-**NR Prices/Collected**. When the app opens (and when it comes back on screen, at most once an hour) it fetches new
+**NR Prices** and **NR Prices/Collected**, then archives them out of your inbox (set `ARCHIVE = false` to keep
+them there). Nothing is deleted. When the app opens (and when it comes back on screen, at most once an hour) it fetches new
 emails from the script's private link and reads them. For-sale alerts add or update listings; sold alerts mark
 homes as sold with the price straight away, weeks before the Valuer General record arrives. Emails are never read
 twice. Setup steps are in the app under **⋯ → Listings → Automatic alert feed**. Keep the script's link private,

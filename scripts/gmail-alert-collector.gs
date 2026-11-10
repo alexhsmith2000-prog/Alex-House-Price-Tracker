@@ -2,10 +2,11 @@
  * Northern Rivers Prices — property alert email collector (Google Apps Script).
  *
  * Runs in YOUR Google account, not on any server of ours. Every hour it:
- *   1. finds new emails under the Gmail label "NR Prices" (your filter puts property alerts there),
+ *   1. finds new property alert emails from the senders listed in SENDERS (and anything you label "NR Prices"),
  *   2. saves a PDF copy of each email to the Google Drive folder "NR Prices alert emails",
  *   3. records the email's text in the Google Sheet "NR Prices alert feed",
- *   4. marks the email with the label "NR Prices/Collected" so it isn't collected twice.
+ *   4. labels the email "NR Prices" and "NR Prices/Collected" (so it isn't collected twice) and, if ARCHIVE
+ *      is true, archives it out of your inbox. Nothing is deleted.
  * The app then fetches new emails from this script's web address (protected by a secret key)
  * and reads the listings itself, so improvements to the reading happen in the app, not here.
  *
@@ -13,7 +14,10 @@
  * (Execute as: Me, Who has access: Anyone), then run showAppLink() and paste the link into the app.
  */
 
-const LABEL = 'NR Prices';                 // the label your Gmail filter applies
+const SENDERS = ['domain.com.au', 'realestate.com.au']; // add other alert senders here
+const ARCHIVE = true;                      // false keeps collected alerts in your inbox
+const LOOK_BACK_DAYS = 60;                 // how far back to look for emails not yet collected
+const LABEL = 'NR Prices';                 // collected alerts get this label (you can also add it by hand)
 const DONE_LABEL = 'NR Prices/Collected';  // added once an email has been collected
 const FOLDER_NAME = 'NR Prices alert emails';
 const SHEET_TITLE = 'NR Prices alert feed';
@@ -40,8 +44,9 @@ function collect() {
   const folder = folder_();
   const done = GmailApp.getUserLabelByName(DONE_LABEL) || GmailApp.createLabel(DONE_LABEL);
   const seen = new Set(sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues().map((r) => String(r[0])) : []);
+  const label = GmailApp.getUserLabelByName(LABEL) || GmailApp.createLabel(LABEL);
   // Gmail search uses hyphens for spaces and slashes in label names
-  const query = `label:${slug_(LABEL)} -label:${slug_(DONE_LABEL)}`;
+  const query = `{from:(${SENDERS.join(' OR ')}) label:${slug_(LABEL)}} -label:${slug_(DONE_LABEL)} newer_than:${LOOK_BACK_DAYS}d`;
   let collected = 0;
   for (let start = 0; start < 500; start += 50) {
     const threads = GmailApp.search(query, start, 50);
@@ -60,7 +65,9 @@ function collect() {
         } catch (e) { console.warn(`PDF copy failed for ${id}: ${e}`); }
         collected++;
       }
+      thread.addLabel(label);
       thread.addLabel(done);
+      if (ARCHIVE) thread.moveToArchive();
     }
     if (threads.length < 50) break;
   }

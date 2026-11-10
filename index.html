@@ -286,14 +286,14 @@
       </div>
       <div id="feedSetup" hidden>
         <details>
-          <summary>Set up the automatic feed (once, about 15 minutes, best on a computer)</summary>
+          <summary>Set up the automatic feed (once, about 10 minutes, best on a computer)</summary>
           <ol class="steps-list">
-            <li><b>Gmail filter:</b> in Gmail on a computer, search <code>from:(domain.com.au OR realestate.com.au)</code> (add other senders you get alerts from), then <i>Show search options → Create filter → Apply the label</i> <b>NR Prices</b> (create it) → tick <i>Also apply to matching conversations</i> → Create.</li>
-            <li><b>Script:</b> go to <b>script.google.com</b> → New project → delete what's there and paste the script from <code>scripts/gmail-alert-collector.gs</code> in the app's GitHub repository → Save.</li>
+            <li><b>Script:</b> on a computer, go to <b>script.google.com</b> → New project → delete what's there and paste the script from <code>scripts/gmail-alert-collector.gs</code> in the app's GitHub repository → Save.</li>
             <li>Choose <b>setup</b> in the function menu → <b>Run</b> → allow access when Google asks (it's your own script).</li>
             <li><b>Deploy → New deployment</b> → type <b>Web app</b> → Execute as <b>Me</b>, Who has access <b>Anyone</b> → Deploy.</li>
             <li>Choose <b>showAppLink</b> → <b>Run</b> → copy the link it shows (keep it private) and paste it here.</li>
           </ol>
+          <p class="hint">The script finds alerts from domain.com.au and realestate.com.au by itself, labels them <b>NR Prices</b>, archives them out of your inbox and saves a PDF of each to the Drive folder <b>NR Prices alert emails</b>. To keep them in your inbox, change <code>ARCHIVE = true</code> to <code>false</code> at the top of the script; to add another sender, add it to <code>SENDERS</code>.</p>
         </details>
         <label>Your script's link
           <input type="url" id="feedUrl" placeholder="https://script.google.com/macros/s/…/exec?key=…" autocomplete="off">
