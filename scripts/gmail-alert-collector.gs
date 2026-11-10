@@ -86,7 +86,7 @@ function htmlToLines(html) {
   s = s.replace(/&nbsp;|&#160;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"').replace(/&#39;|&apos;|&rsquo;|&#8217;/gi, '’').replace(/&ndash;|&#8211;/gi, '–').replace(/&mdash;|&#8212;/gi, '—')
     .replace(/&#(\d+);/g, (m, n) => String.fromCharCode(+n)).replace(/&#x([0-9a-f]+);/gi, (m, n) => String.fromCharCode(parseInt(n, 16)));
-  return s.split(/\n/).map((l) => l.replace(/[ \t\r\f\v​ ]+/g, ' ').trim()).filter(Boolean);
+  return s.split(/\n/).map((l) => l.replace(/[ \t\r\f\v\u200b\u00a0]+/g, ' ').trim()).filter(Boolean);
 }
 
 /** The app calls this web address to fetch emails collected after a given time. */
