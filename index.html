@@ -291,7 +291,7 @@
             <li><b>Script:</b> on a computer, go to <b>script.google.com</b> → New project → delete what's there and paste the script from <code>scripts/gmail-alert-collector.gs</code> in the app's GitHub repository → Save.</li>
             <li>Choose <b>setup</b> in the function menu → <b>Run</b> → allow access when Google asks (it's your own script).</li>
             <li><b>Deploy → New deployment</b> → type <b>Web app</b> → Execute as <b>Me</b>, Who has access <b>Anyone</b> → Deploy.</li>
-            <li>Choose <b>showAppLink</b> → <b>Run</b> → copy the link it shows (keep it private) and paste it here.</li>
+            <li>Choose <b>showAppLink</b> → <b>Run</b> to see your key. Then <b>Deploy → Manage deployments</b>, copy the <b>Web app URL</b> (ends in <code>/exec</code>), add <code>?key=</code> and your key to the end, and paste it here. Keep it private.</li>
           </ol>
           <p class="hint">The script finds alerts from domain.com.au and realestate.com.au by itself, labels them <b>NR Prices</b>, archives them out of your inbox and saves a PDF of each to the Drive folder <b>NR Prices alert emails</b>. To keep them in your inbox, change <code>ARCHIVE = true</code> to <code>false</code> at the top of the script; to add another sender, add it to <code>SENDERS</code>.</p>
         </details>

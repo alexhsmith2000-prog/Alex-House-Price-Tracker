@@ -102,11 +102,17 @@ function doGet(e) {
   return json_({ ok: true, now: Date.now(), lastCollect: Number(PropertiesService.getScriptProperties().getProperty('LAST_COLLECT') || 0), messages });
 }
 
-/** Run after deploying: shows the link to paste into the app (keep it private). */
+/** Run after deploying: shows your key and how to make the link for the app (keep it private). */
 function showAppLink() {
-  const url = (ScriptApp.getService().getUrl() || '').replace(/\/dev$/, '/exec'); // Google sometimes gives the editor-only /dev link
-  if (!url) { Logger.log('Deploy the script as a web app first (Deploy → New deployment → Web app).'); return; }
-  Logger.log(`Paste this into the app (⋯ → Listings → Connect automatic alert feed):\n${url}?key=${PropertiesService.getScriptProperties().getProperty('KEY')}`);
+  const key = PropertiesService.getScriptProperties().getProperty('KEY');
+  if (!key) { Logger.log('Run setup first.'); return; }
+  Logger.log(`Your key: ${key}
+
+To make the link for the app:
+1. Deploy → Manage deployments → copy the Web app URL (it ends in /exec, not /dev).
+2. Add ?key=${key} to the end, so it looks like https://script.google.com/macros/s/…/exec?key=${key}
+3. Paste that into the app: ⋯ → Listings → Automatic alert feed → Connect.
+Keep this link private.`);
 }
 
 function sheet_() {

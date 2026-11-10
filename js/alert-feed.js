@@ -71,7 +71,12 @@ function renderFeedStatus() {
 }
 
 $('#feedConnect').addEventListener('click', async () => {
-  const url = $('#feedUrl').value.trim().replace(/\/dev(\?|$)/, '/exec$1'); // /dev links only work in the script editor
+  const url = $('#feedUrl').value.trim();
+  // /dev links only work inside the script editor, and their code differs from the real web-app link
+  if (/\/dev(\?|$)/.test(url)) {
+    $('#feedStatus').textContent = 'That’s the editor-only /dev link, which the app can’t use. In the script: Deploy → Manage deployments → copy the Web app URL (it ends in /exec), then add ?key= and your key (the part after key= in this link).';
+    return;
+  }
   if (!/^https:\/\/script\.google(usercontent)?\.com\/.+key=/.test(url)) return toast('That doesn’t look like your script’s link. It starts with https://script.google.com/ and ends with ?key=…');
   saveFeedCfg({ url });
   if (await syncFeed()) { $('#feedUrl').value = ''; return; }
