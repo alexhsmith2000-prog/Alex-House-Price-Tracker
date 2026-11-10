@@ -32,49 +32,90 @@ const DATE_RE2 = /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{
 const ymdOf = (m) => { if (!m) return null; const [d, mo, y] = /^\d/.test(m[1]) ? [m[1], m[2], m[3]] : [m[2], m[1], m[3]]; return +y * 10000 + MON[mo.slice(0, 3).toUpperCase()] * 100 + +d; };
 function parseAlertLines(lines, subject = '') {
   const subs = knownSuburbs();
+  const subSet = new Set(subs);
   let date = null, lastPrice = null, lastSoldDate = null, cur = null;
   const out = [];
   const head = `${subject} ${lines.slice(0, 15).join(' ')}`;
-  const kind = /\bsold\b/i.test(head) && !/for sale|home alert/i.test(subject) ? 'sold' : 'sale';
-  const finish = () => { if (cur && (cur.beds != null || cur.baths != null || cur.priceText)) out.push(cur); cur = null; };
+  const kind = /\bsold\b/i.test(head) && !/for sale|home alert|coming soon/i.test(subject) ? 'sold' : 'sale';
+  const comingSoon = /coming soon/i.test(head);
+  const finish = () => { if (cur && (cur.beds != null || cur.baths != null || cur.priceText)) { delete cur.splitSub; out.push(cur); } cur = null; };
+  const setFeat = (k, v) => { cur[k] = v; if (cur.beds != null && cur.baths != null && cur.cars != null) finish(); };
+  const startAddr = (a, priceText) => {
+    finish();
+    const rawTail = a[3];
+    const tail = rawTail.toUpperCase().split(/\s\d{4}\b/)[0].replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const suburb = subs.find((n) => tail === n || tail.startsWith(n + ' ')) || tail.split(' NSW')[0];
+    const numPart = a[1].replace(/\s/g, '');
+    const [unit, num] = numPart.includes('/') ? numPart.split('/') : ['', numPart];
+    cur = { unit, num: houseKey(num.split('-')[0]), numText: num, street: a[2], suburb, priceText: priceText || lastPrice || '', beds: null, baths: null, cars: null,
+      sold: kind === 'sold' || /\bsold\b/i.test(priceText || lastPrice || ''), soldDate: lastSoldDate };
+    // the suburb may run onto the next line ("…Road, South" / "Bowenfels 2790"): remember the words to join
+    if (!/\b\d{4}\b/.test(rawTail) && !subSet.has(tail)) cur.splitSub = tail.split(' ');
+    lastPrice = null; lastSoldDate = null;
+  };
+  // an address part-way along a line (cells of one table row read as one line): "$875,000 Agent Name 76 Taree Street, Tuncurry 2428"
+  const findAddr = (line) => {
+    const m0 = line.match(ADDR_RE); if (m0) return { a: m0, before: '' };
+    // try each word that starts with a digit
+    for (let at = line.indexOf(' '); at !== -1; at = line.indexOf(' ', at + 1)) {
+      if (!/\d/.test(line[at + 1] || '')) continue;
+      const a = line.slice(at + 1).match(ADDR_RE);
+      if (a) return { a, before: line.slice(0, at).trim() };
+    }
+    return null;
+  };
+  // "$875,000 Sam Agent" (agent's name in the cell beside the price): keep the price
+  const trimAgent = (t) => t.replace(/^(.*?(?:\$[\d,.]+\s*[kKmM]?|contact agent|auction))\s+((?:[A-Z][a-zA-Z'’-]+\s?){1,4})$/i, (m, pr, name) => (/^[A-Z]/.test(name) && !/\b(price|guide|new|offers?|over|from|auction|by|negotiation)\b/i.test(name) ? pr : m));
+  const PRICE_RE = /\$\s?\d|contact agent|auction|price on application|expressions of interest|by negotiation|price withheld|undisclosed|\bsold\b/i;
   for (const raw of lines) {
     const line = raw.replace(/\s+/g, ' ').trim();
     if (!line) continue;
     if (!date) date = ymdOf(line.match(DATE_RE) || line.match(DATE_RE2));
-    // bedrooms / bathrooms / cars for the listing just read (may be split over lines)
     if (cur) {
+      // the end of a suburb that ran onto this line, with its postcode
+      if (cur.splitSub) {
+        const sm = line.match(/^([A-Za-z' -]+?)\s+(\d{4})$/);
+        delete cur.splitSub;
+        if (sm) {
+          const rest = sm[1].toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+          const tw = cur.suburb.split(' ');
+          for (let k = tw.length; k >= 0; k--) { const n = [...tw.slice(0, k), rest].join(' ').trim(); if (subSet.has(n) || k === Math.min(1, tw.length)) { cur.suburb = n; break; } }
+          continue;
+        }
+      }
+      // bedrooms / bathrooms / cars (may be split over lines, or bare numbers beside icons: "4 2 3")
       const fb = line.match(/(\d+)\s*(?:beds?|bedrooms?)\b/i), fa = line.match(/(\d+)\s*(?:baths?|bathrooms?)\b/i), fc = line.match(/(\d+)\s*(?:cars?|parking|garages?|car spaces?)\b/i);
       if ((fb || fa || fc) && line.length < 60) {
         if (fb) cur.beds = +fb[1]; if (fa) cur.baths = +fa[1]; if (fc) cur.cars = +fc[1];
         if (cur.beds != null && cur.baths != null && cur.cars != null) finish();
         continue;
       }
+      const bare = line.match(/^(\d{1,2})(?:\s+(\d{1,2}))?(?:\s+(\d{1,2}))?$/);
+      if (bare && cur.beds == null && cur.baths == null) {
+        cur.beds = +bare[1]; if (bare[2] != null) cur.baths = +bare[2]; if (bare[3] != null) cur.cars = +bare[3];
+        if (bare[3] != null) finish();
+        continue;
+      }
+      if (bare && !bare[2] && cur.beds != null) { setFeat(cur.baths == null ? 'baths' : 'cars', +bare[1]); continue; }
       if (cur.beds != null && cur.baths != null) finish();
     }
-    const isAddr = ADDR_RE.test(line);
-    if (!isAddr && line.length < 90 && /\$\s?\d|contact agent|auction|price on application|expressions of interest|by negotiation|price withheld|undisclosed|\bsold\b/i.test(line)) {
+    const found = findAddr(line);
+    if (!found && line.length < 90 && PRICE_RE.test(line)) {
       finish();
-      lastPrice = line;
+      lastPrice = trimAgent(line);
       const sd = ymdOf(line.match(DATE_RE) || line.match(DATE_RE2));
       if (sd && /\bsold\b/i.test(line)) lastSoldDate = sd;
       continue;
     }
-    if (!isAddr && cur && /^sold\b/i.test(line)) { cur.sold = true; const sd = ymdOf(line.match(DATE_RE) || line.match(DATE_RE2)); if (sd) cur.soldDate = sd; continue; }
-    const a = line.match(ADDR_RE);
-    if (a) {
-      finish();
-      const tail = a[3].toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
-      const suburb = subs.find((n) => tail === n || tail.startsWith(n + ' ')) || tail.split(' NSW')[0];
-      const numPart = a[1].replace(/\s/g, '');
-      const [unit, num] = numPart.includes('/') ? numPart.split('/') : ['', numPart];
-      cur = { unit, num: houseKey(num.split('-')[0]), numText: num, street: a[2], suburb, priceText: lastPrice || '', beds: null, baths: null, cars: null,
-        sold: kind === 'sold' || /\bsold\b/i.test(lastPrice || ''), soldDate: lastSoldDate };
-      lastPrice = null; lastSoldDate = null;
+    if (!found && cur && /^sold\b/i.test(line)) { cur.sold = true; const sd = ymdOf(line.match(DATE_RE) || line.match(DATE_RE2)); if (sd) cur.soldDate = sd; continue; }
+    if (found) {
+      const pm = found.before.match(/(\$[\d,.]+\s*[kKmM]?(?:\s*[-–]\s*\$[\d,.]+\s*[kKmM]?)?|contact agent|auction|price on application|expressions of interest|by negotiation|price withheld|undisclosed|sold[^$]*\$[\d,.]+)/i);
+      startAddr(found.a, pm ? pm[0] : '');
       continue;
     }
   }
   finish();
-  return { date, kind, listings: out };
+  return { date, kind, comingSoon, listings: out };
 }
 const listingKey = (suburb, street, num, unit) => `${suburb}|${normStreet(street)}|${num}|${unit || ''}`;
 // Add one alert email's listings to the store (for-sale prices with history; sold reports kept separately)
@@ -83,7 +124,8 @@ function ingestAlert(data, parsed, fallbackDate) {
   let added = 0, updated = 0, sold = 0;
   for (const l of parsed.listings) {
     const key = listingKey(l.suburb, l.street, l.num, l.unit);
-    const { low, high, flag } = parseAsking(l.priceText);
+    const { low, high, flag: f0 } = parseAsking(l.priceText);
+    const flag = f0 || (parsed.comingSoon ? 'Coming soon' : '');
     let r = data.recs[key];
     const isSold = l.sold;
     if (!r) {
@@ -100,7 +142,7 @@ function ingestAlert(data, parsed, fallbackDate) {
     r.firstSeen = Math.min(r.firstSeen, d); r.lastSeen = Math.max(r.lastSeen, d);
     if (r.soldOnly) { r.soldOnly = false; r.firstSeen = d; }
     const last = r.prices[r.prices.length - 1];
-    if (!last || last.text !== l.priceText) { r.prices.push({ d, text: l.priceText, low, high, flag }); r.prices.sort((x, y) => x.d - y.d); }
+    if ((!last || last.text !== l.priceText) && !r.prices.some((x) => x.d === d && x.text === l.priceText)) { r.prices.push({ d, text: l.priceText, low, high, flag }); r.prices.sort((x, y) => x.d - y.d); }
   }
   return { d, added, updated, sold, n: parsed.listings.length };
 }

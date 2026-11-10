@@ -167,6 +167,26 @@ test('alert email: bedrooms, bathrooms and cars split over separate lines', () =
   assert.deepEqual(plain(listings.map((l) => [l.num, l.beds, l.baths, l.cars])), [['12', 4, 2, 1], ['7', 3, 1, null], ['9', 3, 2, null]]);
 });
 
+test('realestate.com.au alert: bare bed/bath/car numbers, postcodes, split suburbs, cells on one line', () => {
+  app("LOC_COUNTS = new Map([['LISMORE', { pc: '2480', n: 1 }], ['SOUTH LISMORE', { pc: '2480', n: 1 }], ['PORT EXAMPLE', { pc: '2999', n: 1 }]])");
+  const htmlToLines = loadCollector()('htmlToLines');
+  // as the automatic feed sees it: price and agent cells on one row, then address, then icon cells with numbers
+  const html = `<table><tr><td>$875,000</td><td>Sam Agent</td></tr><tr><td>76 Sample Street, Lismore 2480</td></tr>
+    <tr><td><img alt=""></td><td>4</td><td><img alt=""></td><td>2</td><td><img alt=""></td><td>3</td></tr><tr><td>View Property</td></tr>
+    <tr><td>Contact Agent Pat Agent 2/46 Example Road, South Lismore 2480</td></tr><tr><td>3</td></tr><tr><td>2</td></tr><tr><td>2</td></tr></table>`;
+  const lines = [...htmlToLines(html),
+    // as a saved PDF reads: the suburb runs onto the next line
+    '$649,000 - $699,000', 'Jo Agent', '73 Test Road, Port', 'Example 2999', '3 1 2', 'View Property'];
+  const parsed = app('parseAlertLines')(lines, 'Coming Soon properties: Alert for your "NSW" saved search');
+  assert.equal(parsed.kind, 'sale');
+  assert.ok(parsed.comingSoon);
+  assert.deepEqual(plain(parsed.listings.map((l) => [l.unit, l.num, l.suburb, l.priceText, l.beds, l.baths, l.cars])), [
+    ['', '76', 'LISMORE', '$875,000', 4, 2, 3],
+    ['2', '46', 'SOUTH LISMORE', 'Contact Agent', 3, 2, 2],
+    ['', '73', 'PORT EXAMPLE', '$649,000 - $699,000', 3, 1, 2],
+  ]);
+});
+
 test('sold alert: recognised as sold, with sold price and date', () => {
   app("LOC_COUNTS = new Map([['LISMORE', { pc: '2480', n: 1 }]])");
   const parsed = app('parseAlertLines')([

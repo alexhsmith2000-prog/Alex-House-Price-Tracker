@@ -362,3 +362,7 @@ h2.collhead { margin: 0; }
 .steps-list { padding-left: 20px; margin: 6px 0; font-size: .85rem; display: grid; gap: 6px; }
 .steps-list code { font-size: .78rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 3px; word-break: break-all; }
 #feedConnected[hidden], #feedSetup[hidden] { display: none; }
+
+.feed-recent{list-style:none;margin:0 0 10px;padding:0;font-size:12.5px;color:var(--muted)}
+.feed-recent li{padding:3px 0;border-bottom:1px solid var(--grid)}
+.feed-recent li.none b{color:var(--down,#c0392b)}

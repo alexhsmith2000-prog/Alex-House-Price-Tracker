@@ -8,6 +8,8 @@ const FEED_KEY = 'nr-prices.feed';
 const feedCfg = () => readJson(FEED_KEY, {}) || {};
 const saveFeedCfg = (c) => safeSet(FEED_KEY, JSON.stringify(c));
 let feedSyncing = false;
+// Bump when the email reader improves: the app then reads every collected email again once.
+const FEED_READER = 2;
 const ymdFromMs = (ms) => { const t = new Date(ms); return t.getFullYear() * 10000 + (t.getMonth() + 1) * 100 + t.getDate(); };
 
 async function syncFeed({ quiet = false } = {}) {
@@ -17,7 +19,8 @@ async function syncFeed({ quiet = false } = {}) {
   if (!quiet) toast('Checking your alert emails…');
   try {
     const u = new URL(cfg.url);
-    u.searchParams.set('since', String(Math.max(0, (cfg.since || 0) - 6 * 3600e3))); // small overlap; emails are de-duplicated by id
+    const reread = cfg.reader !== FEED_READER, before = !!cfg.since;
+    u.searchParams.set('since', reread ? '0' : String(Math.max(0, (cfg.since || 0) - 6 * 3600e3))); // small overlap; emails are de-duplicated by id
     let res;
     try { res = await fetch(u.toString(), { cache: 'no-store' }); }
     catch (e) { throw new Error('Google didn’t let the app in. In the script, Deploy → Manage deployments → ✏️ → Who has access must be “Anyone”, and the link must end in /exec?key=…'); }
@@ -28,21 +31,26 @@ async function syncFeed({ quiet = false } = {}) {
     catch (e) { throw new Error(/sign ?in|accounts\.google/i.test(body) ? 'Google asked for a sign-in. Set Who has access to “Anyone” (Deploy → Manage deployments → ✏️), and use the /exec link, not /dev' : 'the link answered with a web page instead of your feed. Use the Web app link ending in /exec?key=…'); }
     if (!j.ok) throw new Error(j.error || 'the feed refused the request');
     const data = structuredClone(LISTINGS);
-    const seen = new Set(data.feedSeen || []);
+    if (reread) data.files = data.files.filter((f) => f.source !== 'feed');
+    const seen = new Set(reread ? [] : data.feedSeen || []);
     let emails = 0, listings = 0, sold = 0;
     for (const m of (j.messages || []).sort((a, b) => a.received - b.received)) {
       if (seen.has(m.id)) continue;
       const parsed = parseAlertLines(String(m.text || '').split('\n'), m.subject || '');
       const r = ingestAlert(data, parsed, ymdFromMs(m.received));
-      data.files.push({ name: m.subject || 'Alert email', date: r.d, n: r.n, kind: parsed.kind, source: 'feed' });
+      data.files.push({ name: m.subject || 'Alert email', date: r.d, n: r.n, kind: parsed.kind, source: 'feed', from: String(m.from || '').replace(/\s*<.*$/, '').replace(/"/g, '') });
       seen.add(m.id);
       emails++; listings += r.n - r.sold; sold += r.sold;
     }
     data.feedSeen = [...seen].slice(-5000);
     data.files = data.files.slice(-2000);
-    Object.assign(cfg, { since: j.now || Date.now(), lastRun: Date.now(), lastCollect: j.lastCollect || null, lastError: null, last: { emails, listings, sold } });
+    Object.assign(cfg, { reader: FEED_READER, since: j.now || Date.now(), lastRun: Date.now(), lastCollect: j.lastCollect || null, lastError: null, last: { emails, listings, sold } });
     saveFeedCfg(cfg);
-    if (emails) {
+    if (emails && reread && before) {
+      LISTINGS = data;
+      await saveListingsAndRefresh();
+      toast(`Read your ${emails} alert emails again with the improved reader: ${listings} listing${listings === 1 ? '' : 's'}${sold ? `, ${sold} sold` : ''}`);
+    } else if (emails) {
       LISTINGS = data;
       await saveListingsAndRefresh();
       toast(`From ${emails} new alert email${emails === 1 ? '' : 's'}: ${listings} listing${listings === 1 ? '' : 's'}${sold ? `, ${sold} sold` : ''}`);
@@ -64,9 +72,12 @@ function renderFeedStatus() {
   const cfg = feedCfg();
   $('#feedConnected').hidden = !cfg.url;
   $('#feedSetup').hidden = !!cfg.url;
-  if (!cfg.url) { box.textContent = 'Not connected. Follow the steps below once, and new alert emails come in by themselves.'; return; }
+  if (!cfg.url) { $('#feedRecent').replaceChildren(); box.textContent = 'Not connected. Follow the steps below once, and new alert emails come in by themselves.'; return; }
   const when = (ms) => (ms ? new Date(ms).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : 'never');
   const fromFeed = LISTINGS.files.filter((f) => f.source === 'feed').length;
+  const recent = LISTINGS.files.filter((f) => f.source === 'feed').slice(-8).reverse();
+  $('#feedRecent').replaceChildren(...recent.map((f) => el('li', { class: f.n ? '' : 'none' },
+    `${fmtDate(f.date)} · ${f.from ? `${f.from}: ` : ''}${f.name} · `, el('b', {}, f.n ? `${f.n} ${f.kind === 'sold' ? 'sold' : 'listings'}` : 'no listings found'))));
   box.textContent = `Connected. Last checked ${when(cfg.lastRun)}${cfg.last ? ` (${cfg.last.emails} new email${cfg.last.emails === 1 ? '' : 's'})` : ''}. Your Google script last collected emails ${when(cfg.lastCollect)}. ${fromFeed.toLocaleString('en-AU')} alert emails read so far.${cfg.lastError ? ` Last problem: ${cfg.lastError}` : ''}`;
 }
 
