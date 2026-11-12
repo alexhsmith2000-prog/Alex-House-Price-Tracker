@@ -8,6 +8,25 @@ const FEED_KEY = 'nr-prices.feed';
 const feedCfg = () => readJson(FEED_KEY, {}) || {};
 const saveFeedCfg = (c) => safeSet(FEED_KEY, JSON.stringify(c));
 let feedSyncing = false;
+let salesWaiting = [];
+// Weekly sales files your iPhone Shortcut sent to your Google script: fetch the ones not imported yet and import them.
+async function importFeedSales(feedUrl, names) {
+  const files = [];
+  for (const name of names.slice(0, 12)) {
+    toast(`Fetching sales file ${name} from your Google script…`);
+    try {
+      const u = new URL(feedUrl); u.searchParams.delete('since'); u.searchParams.delete('collect');
+      u.searchParams.set('sales', 'file'); u.searchParams.set('name', name);
+      const j = await (await fetch(u.toString(), { cache: 'no-store' })).json();
+      if (!j.ok || !j.data) continue;
+      const bin = atob(j.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      files.push(new File([bytes], name, { type: 'application/zip' }));
+    } catch (e) { console.warn('sales file', name, e); }
+  }
+  if (files.length) await importZipFiles(files);
+  const cfg = feedCfg(); cfg.lastSales = { at: Date.now(), names: files.map((f) => f.name) }; saveFeedCfg(cfg);
+}
 // Bump when the email reader improves: the app then reads every collected email again once.
 const FEED_READER = 2;
 const ymdFromMs = (ms) => { const t = new Date(ms); return t.getFullYear() * 10000 + (t.getMonth() + 1) * 100 + t.getDate(); };
@@ -44,6 +63,7 @@ async function syncFeed({ quiet = false } = {}) {
       emails++; listings += r.n - r.sold; sold += r.sold;
     }
     data.feedSeen = [...seen].slice(-5000);
+    salesWaiting = Array.isArray(j.sales) ? j.sales.filter((n) => fileId(n) && !FILES.files.includes(fileId(n))) : [];
     data.files = data.files.slice(-2000);
     Object.assign(cfg, { reader: FEED_READER, since: j.now || Date.now(), lastRun: Date.now(), lastCollect: j.lastCollect || null, lastError: null, last: { emails, listings, sold } });
     saveFeedCfg(cfg);
@@ -55,7 +75,8 @@ async function syncFeed({ quiet = false } = {}) {
       LISTINGS = data;
       await saveListingsAndRefresh();
       toast(`From ${emails} new alert email${emails === 1 ? '' : 's'}: ${listings} listing${listings === 1 ? '' : 's'}${sold ? `, ${sold} sold` : ''}`);
-    } else if (!quiet) toast('No new alert emails since the last check');
+    } else if (!quiet && !salesWaiting.length) toast('No new alert emails since the last check');
+    if (salesWaiting.length) await importFeedSales(u, salesWaiting.slice().sort());
     return true;
   } catch (e) {
     cfg.lastError = `${new Date().toLocaleString('en-AU')}: ${e.message || e}`;
@@ -79,7 +100,8 @@ function renderFeedStatus() {
   const recent = LISTINGS.files.filter((f) => f.source === 'feed').slice(-8).reverse();
   $('#feedRecent').replaceChildren(...recent.map((f) => el('li', { class: f.n ? '' : 'none' },
     `${fmtDate(f.date)} · ${f.from ? `${f.from}: ` : ''}${f.name} · `, el('b', {}, f.n ? `${f.n} ${f.kind === 'sold' ? 'sold' : 'listings'}` : 'no listings found'))));
-  box.textContent = `Connected. Last checked ${when(cfg.lastRun)}${cfg.last ? ` (${cfg.last.emails} new email${cfg.last.emails === 1 ? '' : 's'})` : ''}. Your Google script last collected emails ${when(cfg.lastCollect)}. ${fromFeed.toLocaleString('en-AU')} alert emails read so far.${cfg.lastError ? ` Last problem: ${cfg.lastError}` : ''}`;
+  const ls = cfg.lastSales && cfg.lastSales.names.length ? ` Last sales file from your Shortcut: ${cfg.lastSales.names[cfg.lastSales.names.length - 1]} (imported ${when(cfg.lastSales.at)}).` : '';
+  box.textContent = `Connected. Last checked ${when(cfg.lastRun)}${cfg.last ? ` (${cfg.last.emails} new email${cfg.last.emails === 1 ? '' : 's'})` : ''}. Your Google script last collected emails ${when(cfg.lastCollect)}. ${fromFeed.toLocaleString('en-AU')} alert emails read so far.${ls}${cfg.lastError ? ` Last problem: ${cfg.lastError}` : ''}`;
 }
 
 $('#feedConnect').addEventListener('click', async () => {

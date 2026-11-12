@@ -232,3 +232,43 @@ test('the screen redraw calls every section (none commented out)', async () => {
   for (const fn of ['renderChart', 'renderMapPanel', 'renderListings', 'renderTable', 'renderResales', 'renderSalesList', 'renderWatchBar'])
     assert.ok(new RegExp(`\\b${fn}\\(\\)`).test(body), `render() should call ${fn}()`);
 });
+
+test('collector: receives weekly sales files from the Shortcut and hands them to the app', () => {
+  // stand-ins for Google's services
+  const props = new Map([['KEY', 'k1']]);
+  const files = [];
+  const mkFile = (name, bytes) => ({ name, bytes, trashed: false, getName() { return this.name; }, setTrashed(t) { this.trashed = t; },
+    getBlob() { return { getBytes: () => this.bytes }; } });
+  const folder = {
+    getId: () => 'f1',
+    createFile: (blob) => { files.push(mkFile(blob.name, blob.bytes)); },
+    getFilesByName: (n) => { const l = files.filter((f) => !f.trashed && f.name === n); let i = 0; return { hasNext: () => i < l.length, next: () => l[i++] }; },
+    getFiles: () => { const l = files.filter((f) => !f.trashed); let i = 0; return { hasNext: () => i < l.length, next: () => l[i++] }; },
+  };
+  const g = {
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props.get(k) ?? null, setProperty: (k, v) => props.set(k, v) }) },
+    DriveApp: { getFolderById: () => folder, createFolder: () => folder },
+    Utilities: {
+      base64Decode: (t) => [...Buffer.from(t, 'base64')].map((b) => (b > 127 ? b - 256 : b)),
+      base64Encode: (b) => Buffer.from(b.map((x) => x & 255)).toString('base64'),
+      newBlob: (bytes, type, name) => ({ bytes, type, name }),
+    },
+    ContentService: { MimeType: { JSON: 'json' }, createTextOutput: (t) => ({ setMimeType: () => JSON.parse(t) }) },
+  };
+  const gs = loadCollector(g);
+  const zip = Buffer.concat([Buffer.from('PK'), Buffer.alloc(2000, 7)]).toString('base64');
+  const post = (q, body) => gs('doPost')({ parameter: q, postData: { contents: body } });
+  assert.equal(post({ key: 'bad', name: '20261109.zip' }, zip).ok, false);
+  assert.match(post({ key: 'k1', name: 'whatever.zip' }, zip).error, /name=/);
+  assert.match(post({ key: 'k1', name: '20261109.zip' }, Buffer.from('<html>not published</html>' + 'x'.repeat(2000)).toString('base64')).error, /isn't a zip/);
+  const ok = post({ key: 'k1', name: '20261109.zip' }, zip);
+  assert.equal(ok.ok, true); assert.equal(ok.bytes, 2002);
+  post({ key: 'k1', name: '20261109.zip' }, zip); // sent twice: replaced, not doubled
+  post({ key: 'k1', name: '20261102.zip' }, zip);
+  const sheetless = gs('salesFiles_')().map((f) => f.getName());
+  assert.deepEqual(plain(sheetless), ['20261109.zip', '20261102.zip']);
+  const got = gs('doGet')({ parameter: { key: 'k1', sales: 'file', name: '20261109.zip' } });
+  assert.equal(got.ok, true);
+  assert.equal(Buffer.from(got.data, 'base64').subarray(0, 2).toString(), 'PK');
+  assert.equal(Buffer.from(got.data, 'base64').length, 2002);
+});

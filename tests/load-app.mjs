@@ -28,8 +28,8 @@ export function loadApp() {
 export const fixture = (name) => fs.readFileSync(path.join(root, 'tests', 'fixtures', name));
 
 // The Google Apps Script that collects alert emails (plain JavaScript, so it runs here too)
-export function loadCollector() {
-  const sandbox = {};
+export function loadCollector(globals = {}) {
+  const sandbox = { ...globals };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'scripts', 'gmail-alert-collector.gs'), 'utf8'), sandbox, { filename: 'gmail-alert-collector.gs' });
   return (expr) => vm.runInContext(expr, sandbox);

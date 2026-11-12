@@ -266,6 +266,13 @@
             <li><b>Save File</b>: turn <i>Ask Where to Save</i> off and set the folder to <i>Shortcuts/NR Prices</i>.</li>
             <li><b>Show Notification</b>: “New sales file ready. Open NR Prices and import it.”</li>
           </ol>
+          <p class="hint"><b>To have the app import it by itself</b> (needs the automatic alert feed connected, with the latest Google script), add these after <i>Save File</i>, and change the notification:</p>
+          <ol>
+            <li><b>Base64 Encode</b> the <i>Contents of URL</i>, with <i>Line Breaks</i> set to <i>None</i>.</li>
+            <li><b>Get Contents of URL</b>: paste your script’s link (the one you connected the alert feed with, ending in <code>?key=…</code>), then type <code>&amp;name=</code>, insert <i>Formatted Date</i>, and type <code>.zip</code>. Tap the arrow: <i>Method</i> <b>POST</b>, <i>Request Body</i> <b>File</b>, and choose <i>Base64 Encoded</i>.</li>
+            <li><b>Show Notification</b>: the <i>Contents of URL</i> from the step above. It says <code>"ok":true</code> when the file arrived.</li>
+          </ol>
+          <p class="hint">The next time you open the app it imports the file on its own (⋯ → Listings → Automatic alert feed shows the last one).</p>
           <p class="hint">Then go to the <b>Automation</b> tab › <b>+</b> › <b>Time of Day</b>: 7:00 am, <i>Weekly</i>, <i>Tuesday</i>, choose <i>Run Immediately</i>, and pick <i>NR Prices weekly</i>.</p>
 
           <h3>2. “NR Prices catch-up” (builds the history, and fills in missed weeks)</h3>

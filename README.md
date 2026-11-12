@@ -37,6 +37,9 @@ another site in the background. So **iPhone Shortcuts** download the files and t
 3. **⋯ → Import sales files**, then select the files in that folder. Importing a file twice does no harm.
 
 Step-by-step instructions are in the app under **⋯ → Set up the iPhone Shortcuts**.
+With the automatic alert feed connected, the weekly shortcut can also send each file to your Google script
+(it keeps them in the Drive folder **NR Prices sales files**), and the app imports new files by itself the
+next time it opens. Downloads still happen on the phone: the Valuer General site refuses cloud servers.
 
 ## Areas
 

@@ -8,6 +8,8 @@
  *   4. labels the email "NR Prices" and "NR Prices/Collected" (so it isn't collected twice) and, if ARCHIVE
  *      is true, archives it out of your inbox. Nothing is deleted.
  * When the app checks for new emails it also asks the script to collect straight away.
+ * It also receives the weekly NSW Valuer General sales files from your iPhone Shortcut (keeping them in the
+ * Drive folder "NR Prices sales files"), so the app can import them without you picking files.
  * The app then fetches new emails from this script's web address (protected by a secret key)
  * and reads the listings itself, so improvements to the reading happen in the app, not here.
  *
@@ -22,7 +24,9 @@ const LABEL = 'NR Prices';                 // collected alerts get this label (y
 const DONE_LABEL = 'NR Prices/Collected';  // added once an email has been collected
 const FOLDER_NAME = 'NR Prices alert emails';
 const SHEET_TITLE = 'NR Prices alert feed';
-const MAX_TEXT = 45000;                    // a Sheets cell holds up to 50,000 characters
+const MAX_TEXT = 45000;
+const SALES_FOLDER_NAME = 'NR Prices sales files';
+const KEEP_SALES_FILES = 30;               // older sales files are moved to the bin (the app has imported them)                    // a Sheets cell holds up to 50,000 characters
 
 function setup() {
   const props = PropertiesService.getScriptProperties();
@@ -103,12 +107,51 @@ function doGet(e) {
       if (lock.tryLock(20000)) { try { collect(); } catch (err) { console.warn(`collect failed: ${err}`); } finally { lock.releaseLock(); } }
     }
   }
+  // sales files sent by your iPhone Shortcut: the app asks for one at a time
+  if (p.sales === 'file') {
+    const it = salesFolder_().getFilesByName(String(p.name || ''));
+    if (!it.hasNext()) return json_({ ok: false, error: 'no such sales file' });
+    return json_({ ok: true, name: String(p.name), data: Utilities.base64Encode(it.next().getBlob().getBytes()) });
+  }
   const since = Number(p.since || 0);
   const sh = sheet_();
   const rows = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues() : [];
   const messages = rows.filter((r) => Number(r[1]) > since).slice(-400)
     .map((r) => ({ id: String(r[0]), received: Number(r[1]), from: String(r[2]), subject: String(r[3]), text: String(r[4]) }));
-  return json_({ ok: true, now: Date.now(), lastCollect: Number(PropertiesService.getScriptProperties().getProperty('LAST_COLLECT') || 0), messages });
+  return json_({ ok: true, now: Date.now(), lastCollect: Number(PropertiesService.getScriptProperties().getProperty('LAST_COLLECT') || 0), messages,
+    sales: salesFiles_().map((f) => f.getName()) });
+}
+
+/** Your iPhone Shortcut sends each week's sales file here (Base64 text, with &name=20261109.zip in the link). */
+function doPost(e) {
+  const key = PropertiesService.getScriptProperties().getProperty('KEY');
+  const p = (e && e.parameter) || {};
+  if (!key || p.key !== key) return json_({ ok: false, error: 'wrong or missing key' });
+  const name = String(p.name || '').trim();
+  if (!/^(\d{8}|\d{4})\.zip$/.test(name)) return json_({ ok: false, error: 'add &name=20261109.zip (the file name) to the link' });
+  let bytes;
+  try { bytes = Utilities.base64Decode(String((e.postData && e.postData.contents) || '').replace(/\s+/g, '')); } catch (err) { return json_({ ok: false, error: 'send the file Base64-encoded (Base64 Encode action, Line Breaks: None)' }); }
+  if (bytes.length < 1000 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) return json_({ ok: false, error: `${name} isn't a zip file: that week probably isn't published yet` });
+  const folder = salesFolder_();
+  const old = folder.getFilesByName(name);
+  while (old.hasNext()) old.next().setTrashed(true);
+  folder.createFile(Utilities.newBlob(bytes, 'application/zip', name));
+  salesFiles_().slice(KEEP_SALES_FILES).forEach((f) => f.setTrashed(true));
+  return json_({ ok: true, name, bytes: bytes.length });
+}
+function salesFolder_() {
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('SALES_FOLDER_ID');
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) { /* recreate */ } }
+  const f = DriveApp.createFolder(SALES_FOLDER_NAME);
+  props.setProperty('SALES_FOLDER_ID', f.getId());
+  return f;
+}
+// newest first (by name: 20261109.zip after 20261102.zip)
+function salesFiles_() {
+  const out = [], it = salesFolder_().getFiles();
+  while (it.hasNext()) { const f = it.next(); if (/\.zip$/i.test(f.getName())) out.push(f); }
+  return out.sort((a, b) => (a.getName() < b.getName() ? 1 : -1));
 }
 
 /** Run after deploying: shows your key and how to make the link for the app (keep it private). */
