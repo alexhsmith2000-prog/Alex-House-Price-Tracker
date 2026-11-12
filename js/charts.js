@@ -156,7 +156,7 @@ function renderChart() {
   }
   const nonEmpty = series.filter((s) => s.points.length);
   if (!nonEmpty.length) {
-    chartGeo = null;
+    chartGeo = null; $('#chartPeriod').hidden = true;
     box.append(el('div', { class: 'empty' }, N ? 'Not enough sales match these filters to chart. Try a wider area, more property types or a bigger price range.' : 'No data to chart yet.'));
     return;
   }
@@ -164,6 +164,9 @@ function renderChart() {
   const pad = { l: 46, r: 10, t: 12, b: 26 };
   const n = Math.max(1, monthDiff(start, end));
   const trends = buildTrends(nonEmpty);
+  const period = chartZoom ? periodStats(nonEmpty, start, end) : null;
+  if (!chartZoom) $('#chartPeriod').hidden = true;
+  if (period && period.fit) trends.push({ ...period.fit, color: 'var(--text)', dash: '2 3', label: 'selected months' });
   const vals = nonEmpty.flatMap((s) => s.points.map((p) => p.v));
   const tSpan = (t) => [t.from > start ? t.from : start, t.to < end ? t.to : end];
   for (const t of trends) { const [a, b] = tSpan(t); if (a <= b) vals.push(trendAt(t, a), trendAt(t, b)); }
@@ -208,7 +211,7 @@ function renderChart() {
   box.append(svg, tip);
   chartGeo = { start, end, fullStart, fullEnd, n, W, padL: pad.l, step, x, nonEmpty, svg, cross, tip };
   if (chartPin && chartPin >= start && chartPin <= end) showChartTip(chartPin); else chartPin = null;
-  if (chartZoom) box.append(el('button', { type: 'button', class: 'chart-reset', onclick: () => { chartZoom = null; renderChart(); } }, '⟲ Full view'));
+  renderChartRange(fullStart, fullEnd, start, end);
   for (const s of series) legend.append(el('span', {}, el('i', { class: s.dashed ? 'dash' : '', style: s.dashed ? `color:${s.color}` : `background:${s.color}` }), s.name + (s.points.length ? '' : ' (not enough sales)')));
   if (showProv) legend.append(el('span', {}, el('i', { class: 'band' }), 'Recent months, sales still being reported'));
   for (const t of trends) legend.append(el('span', {}, el('i', { class: 'dash', style: `color:${t.color}` }), `Trend ${t.label}: `, el('b', { class: t.yearly >= 0 ? 'up' : 'down' }, `${t.yearly >= 0 ? '+' : '−'}${Math.abs(t.yearly * 100).toFixed(1)}%/yr`)));
@@ -225,13 +228,72 @@ function showChartTip(m) {
   const g = chartGeo; if (!g) return;
   const lines = g.nonEmpty.map((s) => ({ s, p: s.points.find((p) => p.month === m) })).filter((o) => o.p);
   g.cross.setAttribute('x1', g.x(m)); g.cross.setAttribute('x2', g.x(m)); g.cross.setAttribute('visibility', 'visible');
+  const pinned = m === chartPin;
   g.tip.replaceChildren(el('div', {}, el('b', {}, fmtMonth(m)), isProvisional(m) ? ' · incomplete' : ''),
-    ...(lines.length ? lines.map((o) => el('div', {}, `${o.s.name}: ${fmtMoney(o.p.v)}${o.p.n ? ` (${o.p.n} sales)` : ''}`)) : [el('div', {}, 'Not enough sales')]));
+    ...(lines.length ? lines.map((o) => el('div', {}, `${o.s.name}: ${fmtMoney(o.p.v)}${o.p.n ? ` (${o.p.n} sales)` : ''}`)) : [el('div', {}, 'Not enough sales')]),
+    pinned ? el('div', { class: 'tip-actions' },
+      el('button', { type: 'button', onclick: () => setChartPeriod(m, null) }, 'Start here'),
+      el('button', { type: 'button', onclick: () => setChartPeriod(null, m) }, 'End here')) : '');
+  g.tip.classList.toggle('pinned', pinned);
   g.tip.hidden = false;
   const w = g.svg.getBoundingClientRect().width || g.W;
   const half = (g.tip.offsetWidth || 180) / 2 + 2; // keep the whole popup inside the chart
   g.tip.style.left = Math.max(half, Math.min(w - half, (g.x(m) / g.W) * w)) + 'px';
 }
+// Show the chart between two months (either can be left as it is)
+function setChartPeriod(from, to) {
+  const g = chartGeo; if (!g) return;
+  let a = from || (chartZoom ? chartZoom.start : g.fullStart), b = to || (chartZoom ? chartZoom.end : g.fullEnd);
+  if (from && b <= from) b = g.fullEnd;            // a new start after the current end: run to the latest month
+  if (to && a >= to) a = g.fullStart;              // a new end before the current start: run from the first month
+  if (a > b) [a, b] = [b, a];
+  if (a < g.fullStart) a = g.fullStart;
+  if (b > g.fullEnd) b = g.fullEnd;
+  if (monthDiff(a, b) < 2) b = addMonths(a, 2) > g.fullEnd ? g.fullEnd : addMonths(a, 2);
+  if (monthDiff(a, b) < 2) a = addMonths(b, -2);
+  chartZoom = { start: a, end: b }; chartPin = null;
+  renderChart();
+}
+function renderChartRange(fullStart, fullEnd, start, end) {
+  for (const [id, v] of [['#chartFrom', start], ['#chartTo', end]]) {
+    const inp = $(id); inp.min = fullStart; inp.max = fullEnd;
+    if (document.activeElement !== inp) inp.value = v;
+  }
+  $('#chartReset').hidden = !chartZoom;
+}
+// change and trend over the months shown (complete months only)
+function periodStats(series, start, end) {
+  const base = series.find((s) => !s.dashed && s.allPoints);
+  const box = $('#chartPeriod');
+  if (!base) { box.hidden = true; return null; }
+  const pts = base.allPoints.filter((p) => p.month >= start && p.month <= end && !isProvisional(p.month));
+  box.hidden = false;
+  if (pts.length < 3) { box.textContent = 'Pick at least 3 complete months (not the shaded recent ones) to see the change over a period.'; return null; }
+  const a = pts[0], b = pts[pts.length - 1], ch = b.v / a.v - 1;
+  const fit = fitTrend(base.allPoints, start, end, 3);
+  const pc = (x) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}%`;
+  box.replaceChildren(el('b', {}, `${fmtMonthShort(a.month)} → ${fmtMonthShort(b.month)}: `),
+    `${base.name.toLowerCase()} ${fmtShort(a.v)} → ${fmtShort(b.v)} `, el('span', { class: ch >= 0 ? 'up' : 'down' }, pc(ch)),
+    ...(fit ? [' · trend over these months ', el('span', { class: fit.yearly >= 0 ? 'up' : 'down' }, `${pc(fit.yearly)}/yr`)] : []),
+    pts.length < 6 ? ' · only a few months, so treat it as rough' : '');
+  return { fit: fit && { ...fit, base: base.name } };
+}
+function setChartFull(on) {
+  $('#chartPanel').classList.toggle('full', on);
+  document.body.classList.toggle('noscroll', on);
+  $('#chartFullBtn').textContent = on ? 'Close' : '⛶ Full screen';
+  $('#chartFullBtn').setAttribute('aria-pressed', String(on));
+  setTimeout(renderChart, 60);
+}
+$('#chartFullBtn').addEventListener('click', () => setChartFull(!$('#chartPanel').classList.contains('full')));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#chartPanel').classList.contains('full')) setChartFull(false); });
+let chartResizeT = 0;
+window.addEventListener('resize', () => { clearTimeout(chartResizeT); chartResizeT = setTimeout(renderChart, 150); });
+$('#chartReset').addEventListener('click', () => { chartZoom = null; renderChart(); });
+for (const id of ['#chartFrom', '#chartTo']) $(id).addEventListener('change', () => {
+  const f = $('#chartFrom').value, t = $('#chartTo').value;
+  if (/^\d{4}-\d{2}$/.test(f) && /^\d{4}-\d{2}$/.test(t)) setChartPeriod(f, t);
+});
 function hideChartTip() { if (!chartGeo) return; chartGeo.tip.hidden = true; chartGeo.cross.setAttribute('visibility', 'hidden'); }
 // month position (fractional) under a screen x
 function chartMonthAt(clientX) {

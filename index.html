@@ -42,12 +42,19 @@
 
     <section class="cards" id="statCards" aria-live="polite"></section>
 
-    <section class="panel">
+    <section class="panel" id="chartPanel">
       <div class="panel-head">
         <div class="seg" id="metricSeg" role="tablist" aria-label="Measure"></div>
         <div class="seg small" id="rangeSeg" role="tablist" aria-label="Time range"></div>
+        <button type="button" class="ghost small" id="chartFullBtn" aria-pressed="false">⛶ Full screen</button>
       </div>
       <div id="chart" class="chart"></div>
+      <div class="chart-range" id="chartRange">
+        <label>From <input type="month" id="chartFrom"></label>
+        <label>to <input type="month" id="chartTo"></label>
+        <button type="button" class="ghost small" id="chartReset" hidden>Show all</button>
+      </div>
+      <p class="chart-period" id="chartPeriod" hidden></p>
       <div id="legend" class="legend"></div>
       <div class="panel-foot">
         <div class="seg small" id="trendSeg" role="tablist" aria-label="Trend lines"></div>

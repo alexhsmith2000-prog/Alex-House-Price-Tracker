@@ -2,7 +2,7 @@
  * Part of the app; the files in js/ load in order and share one scope (see index.html). */
 'use strict';
 
-const APP_VERSION = '33'; // keep in step with version.json and VERSION in sw.js
+const APP_VERSION = '34'; // keep in step with version.json and VERSION in sw.js
 
 // Show unexpected errors instead of failing silently, so they can be reported.
 const showError = (msg) => {

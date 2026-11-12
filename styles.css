@@ -119,8 +119,21 @@ main { padding: 0 16px; display: grid; gap: 14px; max-width: 900px; margin: 0 au
 .seg.small button { padding: 6px 8px; }
 
 .chart { width: 100%; height: 240px; position: relative; touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
-.chart-reset { position: absolute; left: 50px; bottom: 30px; z-index: 3; font-size: .75rem; padding: 4px 9px; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.tip.pinned { pointer-events: auto; }
+.tip-actions { display: flex; gap: 6px; margin-top: 6px; }
+.tip-actions button { flex: 1; font: inherit; font-weight: 600; padding: 5px 8px; border-radius: 6px; border: 0; background: var(--surface); color: var(--text); }
+.chart-range { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; font-size: .85rem; color: var(--muted); }
+.chart-range label { display: inline-flex; align-items: center; gap: 6px; }
+.chart-range input { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 6px; min-width: 0; max-width: 9.5em; }
+.chart-period { margin: 6px 0 0; font-size: .85rem; color: var(--text); }
+.chart-period .up { color: var(--up); } .chart-period .down { color: var(--down); }
+#chartPanel.full {
+  position: fixed; inset: 0; z-index: 60; border-radius: 0; border: 0; margin: 0; overflow-y: auto;
+  display: flex; flex-direction: column;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+}
+#chartPanel.full .chart { flex: none; height: min(calc(100dvh - 150px), 130vw); min-height: 200px; }
+#chartPanel.full #trendNote { display: none; }
 .chart svg { width: 100%; height: 100%; display: block; overflow: visible; }
 .chart .empty { height: 100%; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 0 20px; font-size: .9rem; }
 .chart text { fill: var(--muted); font-size: 11px; }
