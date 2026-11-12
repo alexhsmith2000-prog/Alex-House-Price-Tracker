@@ -70,8 +70,8 @@ function cardWindow() {
     vs: len <= 12 ? 'vs same months a year before' : `vs the ${len} months before` };
 }
 // prev is null when your data doesn't reach back to the whole comparison period (a % would mislead)
-function windowStats(list, w) {
-  const first = list.length ? list[list.length - 1].m : null; // list is newest first
+function windowStats(list, w, official = list) {
+  const first = official.length ? official[official.length - 1].m : null; // official is newest first
   return {
     cur: list.filter((s) => s.m >= w.start && s.m <= w.end).map((s) => s.price),
     prev: first && first <= w.prevStart ? list.filter((s) => s.m >= w.prevStart && s.m <= w.prevEnd).map((s) => s.price) : null,
@@ -110,7 +110,7 @@ function renderCards() {
     box.className = 'cards compare';
     const fn = prefs.metric === 'avg' ? mean : median;
     for (const v of views) {
-      const st = windowStats(salesFor(v), w);
+      const st = windowStats(salesWithEarly(v), w, salesFor(v));
       const c = statCard(v.name, fn(st.cur), st.prev && fn(st.prev), `${st.cur.length} sales${st.prev ? '' : ` · ${NO_PREV}`}`, w.vs);
       c.querySelector('.label').prepend(el('span', { class: 'dot', style: `background:${viewColor(v)}` }));
       box.append(c);
@@ -119,7 +119,7 @@ function renderCards() {
     return;
   }
   box.className = 'cards';
-  const st = windowStats(salesFor(currentView()), w);
+  const st = windowStats(salesWithEarly(currentView()), w, salesFor(currentView()));
   box.append(
     statCard('Median sold', median(st.cur), st.prev && median(st.prev), st.prev ? `${st.cur.length} sales` : NO_PREV, w.vs),
     statCard('Average sold', mean(st.cur), st.prev && mean(st.prev), st.prev ? '' : NO_PREV, w.vs),

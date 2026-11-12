@@ -116,9 +116,10 @@ because it includes the key that protects your feed.
 Valuer General records arrive weeks after a sale. Until they do, homes reported sold (with a price) in your sold
 alerts count in the recent, shaded months of the chart and table, and in an **Early figures** card, labelled as
 coming from your alerts. The official records always come first: when a home's Valuer General record arrives it
-replaces the alert sale (a different price is noted, and the official price is used), and an alert sale still
-missing once its month is complete is left out and listed under the chart. Complete months, trend lines and the
-headline comparison use the official records only.
+replaces the alert sale (a different price is noted, and the official price is used). Before giving up on an
+official record, the app looks for an official sale in the same suburb at the same price within 90 days (the
+address may be written differently). If none turns up once the month is complete, the alert's reported price is
+used, marked as unconfirmed and listed under the chart.
 
 ## Put it on your phone
 

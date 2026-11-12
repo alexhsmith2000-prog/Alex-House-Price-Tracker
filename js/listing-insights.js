@@ -47,6 +47,12 @@ function listingInfo() {
       sold = isUnit && ref ? after.reduce((b, i) => (Math.abs(C.price[i] - ref) < Math.abs(C.price[b] - ref) ? i : b), after[0]) : after[0];
       if (isUnit && ref && Math.abs(C.price[sold] - ref) / ref > 0.35) sold = null; // units: only when the price is plausible
     }
+    // a sold alert with no official record at its address once its month is complete: the official sale may be
+    // written with a different address, so look for one in the suburb at the same price and about the same time
+    if (sold == null && r.soldAlert && r.soldAlert.price && ymdMonth(r.soldAlert.d) < lastCompleteMonth()) {
+      const f = fuzzyOfficial(r, r.soldAlert.price, r.soldAlert.d);
+      if (f != null) { sold = f; info.fuzzy = true; }
+    }
     if (sold != null) { info.sold = sold; const dd = Math.round(dayNum(C.d[sold]) - dayNum(r.firstSeen)); info.dom = dd > 0 && !r.soldOnly ? dd : null; SALE_LISTING.set(sold, r); } // sold before it reached your alerts: days unknown
     else if (r.soldAlert) { // reported sold in an alert; the official record follows weeks later
       info.reported = r.soldAlert;
@@ -156,13 +162,14 @@ function listingItem(r, info) {
   if (info.sold != null) {
     const ref = askMid(p), pr = C.price[info.sold], diff = ref ? (pr - ref) / ref : null;
     lines.push(el('div', { class: 'lstatus sold' }, `SOLD ${fmtDate(C.d[info.sold])} for ${fmtMoney(pr)}`, diff != null ? el('span', { class: diff < 0 ? 'down' : 'up' }, ` · ${Math.abs(diff * 100).toFixed(1)}% ${diff < 0 ? 'under' : 'over'} asking`) : '', info.dom != null ? ` · ${info.dom} days on market` : ' · sold around when it first appeared in your alerts',
-      r.soldAlert && r.soldAlert.price && Math.abs(r.soldAlert.price - pr) > Math.max(1000, r.soldAlert.price * 0.005) ? ` · your alert said ${fmtMoney(r.soldAlert.price)}; the official price is shown` : ''));
+      r.soldAlert && r.soldAlert.price && Math.abs(r.soldAlert.price - pr) > Math.max(1000, r.soldAlert.price * 0.005) ? ` · your alert said ${fmtMoney(r.soldAlert.price)}; the official price is shown` : '',
+      info.fuzzy ? ` · official record found by price and date (listed as ${C.dict.house[C.house[info.sold]] || ''} ${titleCase(C.dict.street[C.street[info.sold]] || '')})` : ''));
   } else if (info.reported) {
     const ref = askMid(p), pr = info.reported.price, diff = ref && pr ? (pr - ref) / ref : null;
     lines.push(el('div', { class: 'lstatus sold' }, `SOLD ${fmtDate(info.reported.d)} ${pr ? `for ${fmtMoney(pr)}` : `(${info.reported.text || 'price not shown'})`}`,
       diff != null ? el('span', { class: diff < 0 ? 'down' : 'up' }, ` · ${Math.abs(diff * 100).toFixed(1)}% ${diff < 0 ? 'under' : 'over'} asking`) : '',
       info.dom != null ? ` · ${info.dom} days on market` : '',
-      ymdMonth(info.reported.d) < lastCompleteMonth() ? ' · from your sold alert, but not found in the official records (left out of the figures)' : ' · from your sold alert; the official record follows in 4–8 weeks'));
+      ymdMonth(info.reported.d) < lastCompleteMonth() ? ' · from your sold alert; not found in the official records, so the reported price is used (unconfirmed)' : ' · from your sold alert; the official record follows in 4–8 weeks'));
   } else {
     lines.push(el('div', { class: `lstatus${info.stale ? ' stale' : ''}` }, `${info.stale ? 'Stale: ' : 'On market '}${info.age} days${info.stale ? ' and not sold' : ''}${r.relisted ? ' · relisted' : ''}`));
   }
