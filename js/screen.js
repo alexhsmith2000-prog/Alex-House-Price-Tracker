@@ -19,7 +19,8 @@ setupCollapsers();
 
 function render() {
   renderHeader(); renderChips(); renderFilterBar(); renderSegs();
-  renderChart(); // also draws the headline cards for the period shown renderMapPanel(); renderListings(); renderTable(); renderResales(); renderSalesList(); renderWatchBar();
+  // renderChart also draws the headline cards, for the period shown on the chart
+  renderChart(); renderMapPanel(); renderListings(); renderTable(); renderResales(); renderSalesList(); renderWatchBar();
 }
 
 function renderHeader() {

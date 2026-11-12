@@ -223,3 +223,12 @@ test('importing alerts: price history, sold reports, no duplicates', () => {
   const s = data.recs['CASINO|OTHER ST|3|'];
   assert.ok(s.soldOnly && s.prices.length === 0 && s.beds === 3);
 });
+
+test('the screen redraw calls every section (none commented out)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../js/screen.js', import.meta.url), 'utf8');
+  const body = src.slice(src.indexOf('function render()'), src.indexOf('\n}', src.indexOf('function render()')))
+    .replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const fn of ['renderChart', 'renderMapPanel', 'renderListings', 'renderTable', 'renderResales', 'renderSalesList', 'renderWatchBar'])
+    assert.ok(new RegExp(`\\b${fn}\\(\\)`).test(body), `render() should call ${fn}()`);
+});
