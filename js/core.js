@@ -2,7 +2,7 @@
  * Part of the app; the files in js/ load in order and share one scope (see index.html). */
 'use strict';
 
-const APP_VERSION = '31'; // keep in step with version.json and VERSION in sw.js
+const APP_VERSION = '32'; // keep in step with version.json and VERSION in sw.js
 
 // Show unexpected errors instead of failing silently, so they can be reported.
 const showError = (msg) => {
@@ -59,7 +59,7 @@ const DEFAULT_VIEWS = [
   { id: 'v-ballina', name: 'Ballina', area: 'ballina', locs: ['BALLINA', 'EAST BALLINA', 'WEST BALLINA'], types: ['house', 'unit'], min: 0, max: 0 },
 ];
 const PALETTE = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)', 'var(--s7)', 'var(--s8)'];
-const RANGES = [{ key: 12, label: '1Y' }, { key: 24, label: '2Y' }, { key: 36, label: '3Y' }, { key: 0, label: 'All' }];
+const RANGES = [{ key: 6, label: '6M' }, { key: 12, label: '1Y' }, { key: 24, label: '2Y' }, { key: 36, label: '3Y' }, { key: 0, label: 'All' }];
 const METRICS = [{ key: 'median', label: 'Median' }, { key: 'avg', label: 'Average' }, { key: 'both', label: 'Both' }];
 const MIN_PRICE = 10000; // below this it's a token or family transfer, not a market sale
 const MIN_SALES = 3; // months with fewer sales are left off the chart (too noisy)
