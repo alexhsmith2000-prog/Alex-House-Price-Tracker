@@ -141,9 +141,22 @@ function buildSeries() {
 function renderChart() {
   const box = $('#chart'); box.replaceChildren();
   const legend = $('#legend'); legend.replaceChildren();
-  const { series, start, end } = buildSeries();
+  const built = buildSeries();
+  const { series } = built;
+  // reset zoom and the pinned month when the search or time range changes
+  const zkey = `${prefs.view}|${prefs.range}`;
+  if (zkey !== chartZoomKey) { chartZoomKey = zkey; chartZoom = null; chartPin = null; }
+  let { start, end } = built;
+  const fullStart = start, fullEnd = end;
+  if (chartZoom && start) {
+    start = chartZoom.start > start ? chartZoom.start : start;
+    end = chartZoom.end < end ? chartZoom.end : end;
+    if (monthDiff(start, end) < 2 || (start === fullStart && end === fullEnd)) { chartZoom = null; start = fullStart; end = fullEnd; }
+    else for (const s of series) s.points = s.points.filter((p) => p.month >= start && p.month <= end);
+  }
   const nonEmpty = series.filter((s) => s.points.length);
   if (!nonEmpty.length) {
+    chartGeo = null;
     box.append(el('div', { class: 'empty' }, N ? 'Not enough sales match these filters to chart. Try a wider area, more property types or a bigger price range.' : 'No data to chart yet.'));
     return;
   }
@@ -152,7 +165,8 @@ function renderChart() {
   const n = Math.max(1, monthDiff(start, end));
   const trends = buildTrends(nonEmpty);
   const vals = nonEmpty.flatMap((s) => s.points.map((p) => p.v));
-  for (const t of trends) { const a = t.from > start ? t.from : start; if (a <= t.to) vals.push(trendAt(t, a), trendAt(t, t.to)); }
+  const tSpan = (t) => [t.from > start ? t.from : start, t.to < end ? t.to : end];
+  for (const t of trends) { const [a, b] = tSpan(t); if (a <= b) vals.push(trendAt(t, a), trendAt(t, b)); }
   const { lo, hi, ticks } = niceTicks(Math.min(...vals), Math.max(...vals));
   const step = (W - pad.l - pad.r) / n;
   const x = (m) => pad.l + monthDiff(start, m) * step;
@@ -184,28 +198,17 @@ function renderChart() {
     });
   }
   for (const t of trends) {
-    const a = t.from > start ? t.from : start;
-    if (a > t.to) continue;
-    svg.append(svgEl('line', { x1: x(a), y1: y(trendAt(t, a)), x2: x(t.to), y2: y(trendAt(t, t.to)), stroke: t.color, 'stroke-width': 2, 'stroke-dasharray': t.dash, 'stroke-linecap': 'round', opacity: 0.9 }));
+    const [a, b] = tSpan(t);
+    if (a > b) continue;
+    svg.append(svgEl('line', { x1: x(a), y1: y(trendAt(t, a)), x2: x(b), y2: y(trendAt(t, b)), stroke: t.color, 'stroke-width': 2, 'stroke-dasharray': t.dash, 'stroke-linecap': 'round', opacity: 0.9 }));
   }
   const cross = svgEl('line', { y1: pad.t, y2: H - pad.b, stroke: 'var(--muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' });
   svg.append(cross);
   const tip = el('div', { class: 'tip', hidden: true });
-  const onMove = (ev) => {
-    const r = svg.getBoundingClientRect();
-    const px = ((ev.clientX - r.left) / r.width) * W;
-    const m = addMonths(start, Math.max(0, Math.min(n, Math.round((px - pad.l) / step))));
-    const lines = nonEmpty.map((s) => ({ s, p: s.points.find((p) => p.month === m) })).filter((o) => o.p);
-    cross.setAttribute('x1', x(m)); cross.setAttribute('x2', x(m)); cross.setAttribute('visibility', 'visible');
-    tip.replaceChildren(el('div', {}, el('b', {}, fmtMonth(m)), isProvisional(m) ? ' · incomplete' : ''),
-      ...(lines.length ? lines.map((o) => el('div', {}, `${o.s.name}: ${fmtMoney(o.p.v)}${o.p.n ? ` (${o.p.n} sales)` : ''}`)) : [el('div', {}, 'Not enough sales')]));
-    tip.hidden = false;
-    tip.style.left = Math.max(90, Math.min(r.width - 90, (x(m) / W) * r.width)) + 'px';
-  };
-  svg.addEventListener('pointermove', onMove);
-  svg.addEventListener('pointerdown', onMove);
-  svg.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); tip.hidden = true; });
   box.append(svg, tip);
+  chartGeo = { start, end, fullStart, fullEnd, n, W, padL: pad.l, step, x, nonEmpty, svg, cross, tip };
+  if (chartPin && chartPin >= start && chartPin <= end) showChartTip(chartPin); else chartPin = null;
+  if (chartZoom) box.append(el('button', { type: 'button', class: 'chart-reset', onclick: () => { chartZoom = null; renderChart(); } }, '⟲ Full view'));
   for (const s of series) legend.append(el('span', {}, el('i', { class: s.dashed ? 'dash' : '', style: s.dashed ? `color:${s.color}` : `background:${s.color}` }), s.name + (s.points.length ? '' : ' (not enough sales)')));
   if (showProv) legend.append(el('span', {}, el('i', { class: 'band' }), 'Recent months, sales still being reported'));
   for (const t of trends) legend.append(el('span', {}, el('i', { class: 'dash', style: `color:${t.color}` }), `Trend ${t.label}: `, el('b', { class: t.yearly >= 0 ? 'up' : 'down' }, `${t.yearly >= 0 ? '+' : '−'}${Math.abs(t.yearly * 100).toFixed(1)}%/yr`)));
@@ -215,6 +218,81 @@ function renderChart() {
     ? `Trend lines are a straight-line fit to the ${trends[0].base.toLowerCase()} over each period, shown as growth per year. Incomplete recent months are left out.${short ? ' 3- and 6-month trends rest on only a few months of sales, so they swing a lot: treat them as an early signal, not a forecast.' : ''}`
     : trendsOn() && prefs.view !== COMPARE && N ? 'Not enough months of sales for the trend periods you picked. Try a wider search, a longer period or the 3-month rolling view.' : '';
 }
+
+// ---------- chart interaction: tap to pin a month, pinch to zoom, drag to move along ----------
+let chartGeo = null, chartZoom = null, chartZoomKey = '', chartPin = null;
+function showChartTip(m) {
+  const g = chartGeo; if (!g) return;
+  const lines = g.nonEmpty.map((s) => ({ s, p: s.points.find((p) => p.month === m) })).filter((o) => o.p);
+  g.cross.setAttribute('x1', g.x(m)); g.cross.setAttribute('x2', g.x(m)); g.cross.setAttribute('visibility', 'visible');
+  g.tip.replaceChildren(el('div', {}, el('b', {}, fmtMonth(m)), isProvisional(m) ? ' · incomplete' : ''),
+    ...(lines.length ? lines.map((o) => el('div', {}, `${o.s.name}: ${fmtMoney(o.p.v)}${o.p.n ? ` (${o.p.n} sales)` : ''}`)) : [el('div', {}, 'Not enough sales')]));
+  g.tip.hidden = false;
+  const w = g.svg.getBoundingClientRect().width || g.W;
+  const half = (g.tip.offsetWidth || 180) / 2 + 2; // keep the whole popup inside the chart
+  g.tip.style.left = Math.max(half, Math.min(w - half, (g.x(m) / g.W) * w)) + 'px';
+}
+function hideChartTip() { if (!chartGeo) return; chartGeo.tip.hidden = true; chartGeo.cross.setAttribute('visibility', 'hidden'); }
+// month position (fractional) under a screen x
+function chartMonthAt(clientX) {
+  const g = chartGeo, r = g.svg.getBoundingClientRect();
+  const px = ((clientX - r.left) / (r.width || 1)) * g.W;
+  return Math.max(0, Math.min(g.n, (px - g.padL) / g.step));
+}
+(function chartGestures() {
+  const box = $('#chart');
+  const ptrs = new Map();
+  let gesture = null, raf = 0;
+  const redraw = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; renderChart(); }); };
+  const setWindow = (s0, span) => {
+    const g = chartGeo, full = monthDiff(g.fullStart, g.fullEnd);
+    if (span >= full) { chartZoom = null; return redraw(); }
+    s0 = Math.max(0, Math.min(full - span, Math.round(s0)));
+    chartZoom = { start: addMonths(g.fullStart, s0), end: addMonths(g.fullStart, s0 + span) };
+    redraw();
+  };
+  box.addEventListener('gesturestart', (ev) => ev.preventDefault()); // iPhone: pinch zooms the chart, not the page
+  box.addEventListener('pointerdown', (ev) => {
+    if (!chartGeo || ev.target.closest('button')) return;
+    ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    const g = chartGeo, off = monthDiff(g.fullStart, g.start);
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      gesture = { type: 'pinch', d0: Math.max(30, Math.abs(a.x - b.x)), off, span: g.n, c: off + chartMonthAt((a.x + b.x) / 2) };
+    } else if (ptrs.size === 1) gesture = { type: 'tap', x0: ev.clientX, y0: ev.clientY, t0: Date.now(), off, span: g.n, id: ev.pointerId };
+  });
+  box.addEventListener('pointermove', (ev) => {
+    if (!chartGeo) return;
+    if (ev.pointerType === 'mouse' && !ev.buttons && !chartPin) showChartTip(addMonths(chartGeo.start, Math.round(chartMonthAt(ev.clientX))));
+    const p = ptrs.get(ev.pointerId); if (!p) return;
+    p.x = ev.clientX; p.y = ev.clientY;
+    if (gesture && gesture.type === 'pinch' && ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      const span = Math.max(3, Math.round(gesture.span * (gesture.d0 / Math.max(30, Math.abs(a.x - b.x)))));
+      setWindow(gesture.c - (gesture.c - gesture.off) * (span / gesture.span), span);
+    } else if (gesture && gesture.type !== 'pinch' && chartZoom && Math.abs(ev.clientX - gesture.x0) > 10) {
+      gesture.type = 'pan';
+      const r = chartGeo.svg.getBoundingClientRect(), stepPx = (chartGeo.step / chartGeo.W) * (r.width || 1);
+      setWindow(gesture.off - (ev.clientX - gesture.x0) / stepPx, gesture.span);
+    }
+  });
+  const end = (ev) => {
+    const g = gesture;
+    if (g && g.type === 'tap' && g.id === ev.pointerId && ev.type === 'pointerup' && chartGeo
+      && Math.hypot(ev.clientX - g.x0, ev.clientY - g.y0) < 10 && Date.now() - g.t0 < 700) {
+      chartPin = addMonths(chartGeo.start, Math.round(chartMonthAt(ev.clientX)));
+      showChartTip(chartPin);
+    }
+    ptrs.delete(ev.pointerId);
+    if (!ptrs.size) gesture = null;
+    else if (g && g.type === 'pinch') gesture = { type: 'done' }; // one finger lifted: wait for the other
+  };
+  box.addEventListener('pointerup', end);
+  box.addEventListener('pointercancel', end);
+  box.addEventListener('pointerleave', (ev) => { if (ev.pointerType === 'mouse' && !chartPin) hideChartTip(); });
+  // tap anywhere else to close the pinned popup
+  document.addEventListener('pointerdown', (ev) => { if (chartPin && !box.contains(ev.target)) { chartPin = null; hideChartTip(); } });
+})();
 
 let tableAll = false;
 function tableToggle(total) {
