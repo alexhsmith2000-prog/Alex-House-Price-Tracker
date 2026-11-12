@@ -111,6 +111,15 @@ homes as sold with the price straight away, weeks before the Valuer General reco
 twice. Setup steps are in the app under **⋯ → Listings → Automatic alert feed**. Keep the script's link private,
 because it includes the key that protects your feed.
 
+### Early sold prices from your alerts
+
+Valuer General records arrive weeks after a sale. Until they do, homes reported sold (with a price) in your sold
+alerts count in the recent, shaded months of the chart and table, and in an **Early figures** card, labelled as
+coming from your alerts. The official records always come first: when a home's Valuer General record arrives it
+replaces the alert sale (a different price is noted, and the official price is used), and an alert sale still
+missing once its month is complete is left out and listed under the chart. Complete months, trend lines and the
+headline comparison use the official records only.
+
 ## Put it on your phone
 
 1. In the GitHub repo go to **Settings → Pages** and set **Source** to **GitHub Actions**.
@@ -130,7 +139,7 @@ and a daily run uses about 1–2 minutes. The Valuer General data is free.
 - `js/`: the app, split by area. The files load in order (see the bottom of `index.html`) and share one scope:
   `core.js` (settings, reference data, helpers), `sales-data.js` (sold-sales store and filtering), `geo.js` (map positions),
   `idb.js`, `import-sales.js` (Valuer General files), `screen.js`, `charts.js`, `flood.js`, `listings.js`,
-  `listing-insights.js`, `alert-feed.js`, `market.js`, `resales.js`, `maps.js`, `filters.js`, `listing-entry.js`, `menu.js`, and `main.js` (start-up).
+  `listing-insights.js`, `early-sales.js`, `alert-feed.js`, `market.js`, `resales.js`, `maps.js`, `filters.js`, `listing-entry.js`, `menu.js`, and `main.js` (start-up).
 - `sw.js` + `manifest.webmanifest`: offline use and home-screen install. Bump `VERSION` in `sw.js`, `APP_VERSION` in
   `js/core.js` and `version.json` together when app files change.
 - `tests/`: automated checks for the file readers (sales files, council flood PDFs, alert emails) and price maths, using

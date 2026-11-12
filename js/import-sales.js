@@ -189,15 +189,16 @@ function monthly(list, smooth) {
 }
 function monthlyCalc(list, smooth) {
   const by = new Map();
-  for (const s of list) { const m = s.m; let a = by.get(m); if (!a) by.set(m, (a = [])); a.push(s.price); }
+  const earlyBy = new Map(); // sales from your sold alerts (not yet in the official records)
+  for (const s of list) { const m = s.m; let a = by.get(m); if (!a) by.set(m, (a = [])); a.push(s.price); if (s.early) earlyBy.set(m, (earlyBy.get(m) || 0) + 1); }
   if (!by.size) return [];
   const ms = [...by.keys()].sort();
   const rows = [];
   for (let m = ms[0]; m <= ms[ms.length - 1]; m = addMonths(m, 1)) {
     const own = by.get(m) || [];
-    let pool = own;
-    if (smooth > 1) { pool = []; for (let i = 0; i < smooth; i++) pool = pool.concat(by.get(addMonths(m, -i)) || []); }
-    rows.push({ month: m, n: own.length, pooled: pool.length, median: median(pool), avg: mean(pool) });
+    let pool = own, pe = earlyBy.get(m) || 0;
+    if (smooth > 1) { pool = []; pe = 0; for (let i = 0; i < smooth; i++) { const mm = addMonths(m, -i); pool = pool.concat(by.get(mm) || []); pe += earlyBy.get(mm) || 0; } }
+    rows.push({ month: m, n: own.length, early: earlyBy.get(m) || 0, pooled: pool.length, pooledEarly: pe, median: median(pool), avg: mean(pool) });
   }
   return rows;
 }

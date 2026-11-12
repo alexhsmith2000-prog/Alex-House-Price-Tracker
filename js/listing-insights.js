@@ -43,7 +43,7 @@ function listingInfo() {
     const after = sales.filter((i) => fit(i) && C.d[i] >= ymdAdd(r.firstSeen, r.soldOnly ? -75 : -14));
     let sold = null;
     if (after.length) {
-      const ref = askMid(askOf(r));
+      const ref = askMid(askOf(r)) || (r.soldAlert && r.soldAlert.price) || null;
       sold = isUnit && ref ? after.reduce((b, i) => (Math.abs(C.price[i] - ref) < Math.abs(C.price[b] - ref) ? i : b), after[0]) : after[0];
       if (isUnit && ref && Math.abs(C.price[sold] - ref) / ref > 0.35) sold = null; // units: only when the price is plausible
     }
@@ -155,12 +155,14 @@ function listingItem(r, info) {
   // status
   if (info.sold != null) {
     const ref = askMid(p), pr = C.price[info.sold], diff = ref ? (pr - ref) / ref : null;
-    lines.push(el('div', { class: 'lstatus sold' }, `SOLD ${fmtDate(C.d[info.sold])} for ${fmtMoney(pr)}`, diff != null ? el('span', { class: diff < 0 ? 'down' : 'up' }, ` · ${Math.abs(diff * 100).toFixed(1)}% ${diff < 0 ? 'under' : 'over'} asking`) : '', info.dom != null ? ` · ${info.dom} days on market` : ' · sold around when it first appeared in your alerts'));
+    lines.push(el('div', { class: 'lstatus sold' }, `SOLD ${fmtDate(C.d[info.sold])} for ${fmtMoney(pr)}`, diff != null ? el('span', { class: diff < 0 ? 'down' : 'up' }, ` · ${Math.abs(diff * 100).toFixed(1)}% ${diff < 0 ? 'under' : 'over'} asking`) : '', info.dom != null ? ` · ${info.dom} days on market` : ' · sold around when it first appeared in your alerts',
+      r.soldAlert && r.soldAlert.price && Math.abs(r.soldAlert.price - pr) > Math.max(1000, r.soldAlert.price * 0.005) ? ` · your alert said ${fmtMoney(r.soldAlert.price)}; the official price is shown` : ''));
   } else if (info.reported) {
     const ref = askMid(p), pr = info.reported.price, diff = ref && pr ? (pr - ref) / ref : null;
     lines.push(el('div', { class: 'lstatus sold' }, `SOLD ${fmtDate(info.reported.d)} ${pr ? `for ${fmtMoney(pr)}` : `(${info.reported.text || 'price not shown'})`}`,
       diff != null ? el('span', { class: diff < 0 ? 'down' : 'up' }, ` · ${Math.abs(diff * 100).toFixed(1)}% ${diff < 0 ? 'under' : 'over'} asking`) : '',
-      info.dom != null ? ` · ${info.dom} days on market` : '', ' · from your sold alert; the official record follows in 4–8 weeks'));
+      info.dom != null ? ` · ${info.dom} days on market` : '',
+      ymdMonth(info.reported.d) < lastCompleteMonth() ? ' · from your sold alert, but not found in the official records (left out of the figures)' : ' · from your sold alert; the official record follows in 4–8 weeks'));
   } else {
     lines.push(el('div', { class: `lstatus${info.stale ? ' stale' : ''}` }, `${info.stale ? 'Stale: ' : 'On market '}${info.age} days${info.stale ? ' and not sold' : ''}${r.relisted ? ' · relisted' : ''}`));
   }

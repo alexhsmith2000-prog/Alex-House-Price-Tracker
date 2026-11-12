@@ -201,7 +201,7 @@ const suburbSpot = (name) => {
 };
 // The search's filters applied to alert listings, the same way as to sales. What a listing can't tell us
 // (land size, no price shown, no map position) leaves it out when that filter is on.
-function listingsFor(v) {
+function listingsFor(v, { soldPrices = false } = {}) {
   const area = areaOf(v.area);
   const locSet = v.locs && v.locs.length ? new Set(v.locs) : null;
   const streetQ = v.street ? normStreet(v.street) : null;
@@ -218,7 +218,7 @@ function listingsFor(v) {
       if (!v.types.includes(listingType(r, info))) return false; // with no earlier sale on record, a house counts as in town
     }
     if (v.min || v.max) {
-      const a = r.soldOnly ? { low: info.soldPrice ?? null, high: info.soldPrice ?? null } : askOf(r);
+      const a = r.soldOnly || (soldPrices && info.soldPrice) ? { low: info.soldPrice ?? null, high: info.soldPrice ?? null } : askOf(r);
       if (a.low == null) return false; // no price shown
       if (v.min && a.high < v.min) return false;
       if (v.max && a.low > v.max) return false;

@@ -126,6 +126,15 @@ function renderCards() {
     el('div', { class: 'card' }, el('div', { class: 'label' }, 'Sales'), el('div', { class: 'value' }, st.cur.length.toLocaleString('en-AU')),
       el('div', { class: 'delta' }, st.prev ? `${st.prev.length.toLocaleString('en-AU')} ${w.len <= 12 ? 'same months a year before' : `in the ${w.len} months before`}` : NO_PREV)),
     el('p', { class: 'cards-note' }, `${title}${cutNote ? ` · ${cutNote}` : ''}`));
+  // early figures for the months still coming in (official so far + your sold alerts), not compared with anything
+  const eFrom = addMonths(lastCompleteMonth(), 1), eTo = thisMonth();
+  const recent = salesWithEarly(currentView()).filter((x) => x.m >= eFrom && x.m <= eTo);
+  if (recent.length) {
+    const ne = recent.filter((x) => x.early).length;
+    box.insertBefore(el('div', { class: 'card wide early' }, el('div', { class: 'label' }, `Early figures · ${monthsLabel(eFrom, eTo)} (still coming in)`),
+      el('div', { class: 'value' }, recent.length >= MIN_SALES ? fmtShort(median(recent.map((x) => x.price))) : '—'),
+      el('div', { class: 'delta' }, `median of ${recent.length} sale${recent.length === 1 ? '' : 's'} so far${ne ? `, ${ne} from your sold alerts` : ''} · not compared until the month${eFrom === eTo ? ' is' : 's are'} complete`)), box.lastChild);
+  }
 }
 
 function niceTicks(min, max, count = 4) {
@@ -140,12 +149,12 @@ function niceTicks(min, max, count = 4) {
 function buildSeries() {
   const series = [];
   const add = (name, color, dashed, points) => series.push({ name, color, dashed, points });
-  const pts = (rows, k) => rows.filter((r) => r.pooled >= MIN_SALES).map((r) => ({ month: r.month, v: r[k], n: r.pooled }));
+  const pts = (rows, k) => rows.filter((r) => r.pooled >= MIN_SALES).map((r) => ({ month: r.month, v: r[k], n: r.pooled, e: r.pooledEarly }));
   if (prefs.view === COMPARE) {
-    for (const v of views) add(v.name, viewColor(v), false, pts(monthly(salesFor(v), prefs.smooth), prefs.metric));
+    for (const v of views) add(v.name, viewColor(v), false, pts(monthly(salesWithEarly(v), prefs.smooth), prefs.metric));
   } else {
     const v = currentView(), color = viewColor(v);
-    const rows = monthly(salesFor(v), prefs.smooth);
+    const rows = monthly(salesWithEarly(v), prefs.smooth); // incomplete months include early sales from your sold alerts
     if (prefs.metric !== 'avg') add('Median sold', color, false, pts(rows, 'median'));
     if (prefs.metric !== 'median') add('Average sold', 'var(--muted)', false, pts(rows, 'avg'));
     const lst = entries.filter((e) => e.suburb === v.name && e.avgListing != null).sort((a, b) => a.month.localeCompare(b.month));
@@ -184,6 +193,7 @@ function renderChart() {
   }
   const nonEmpty = series.filter((s) => s.points.length);
   renderCards(); // the cards follow the period shown on the chart
+  if (prefs.view !== COMPARE) renderEarlyNote(currentView()); else renderEarlyNote(null);
   if (!nonEmpty.length) {
     chartGeo = null; $('#chartPeriod').hidden = true;
     box.append(el('div', { class: 'empty' }, N ? 'Not enough sales match these filters to chart. Try a wider area, more property types or a bigger price range.' : 'No data to chart yet.'));
@@ -259,7 +269,7 @@ function showChartTip(m) {
   g.cross.setAttribute('x1', g.x(m)); g.cross.setAttribute('x2', g.x(m)); g.cross.setAttribute('visibility', 'visible');
   const pinned = m === chartPin;
   g.tip.replaceChildren(el('div', {}, el('b', {}, fmtMonth(m)), isProvisional(m) ? ' · incomplete' : ''),
-    ...(lines.length ? lines.map((o) => el('div', {}, `${o.s.name}: ${fmtMoney(o.p.v)}${o.p.n ? ` (${o.p.n} sales)` : ''}`)) : [el('div', {}, 'Not enough sales')]),
+    ...(lines.length ? lines.map((o) => el('div', {}, `${o.s.name}: ${fmtMoney(o.p.v)}${o.p.n ? ` (${o.p.n} sales${o.p.e ? `, ${o.p.e} from your alerts` : ''})` : ''}`)) : [el('div', {}, 'Not enough sales')]),
     pinned ? el('div', { class: 'tip-actions' },
       el('button', { type: 'button', onclick: () => setChartPeriod(m, null) }, 'Start here'),
       el('button', { type: 'button', onclick: () => setChartPeriod(null, m) }, 'End here')) : '');
@@ -399,7 +409,7 @@ function renderTable() {
   if (prefs.view === COMPARE) {
     const key = prefs.metric === 'avg' ? 'avg' : 'median';
     $('#tableTitle').textContent = `${key === 'avg' ? 'Average' : 'Median'} sold${rolling}`;
-    const data = views.map((v) => new Map(monthly(salesFor(v), prefs.smooth).map((r) => [r.month, r])));
+    const data = views.map((v) => new Map(monthly(salesWithEarly(v), prefs.smooth).map((r) => [r.month, r])));
     const months = [...new Set(data.flatMap((m) => [...m.keys()]))].sort().reverse();
     t.append(el('thead', {}, el('tr', {}, el('th', {}, 'Month'), ...views.map((v) => el('th', {}, v.name)))));
     const tb = el('tbody');
@@ -412,7 +422,7 @@ function renderTable() {
   }
   const v = currentView();
   $('#tableTitle').textContent = `${v.name} by month${rolling}`;
-  const rows = new Map(monthly(salesFor(v), prefs.smooth).map((r) => [r.month, r]));
+  const rows = new Map(monthly(salesWithEarly(v), prefs.smooth).map((r) => [r.month, r]));
   const lst = new Map(entries.filter((e) => e.suburb === v.name).map((e) => [e.month, e]));
   const months = [...new Set([...rows.keys(), ...lst.keys()])].sort().reverse();
   t.append(el('thead', {}, el('tr', {}, el('th', {}, 'Month'), el('th', {}, 'Sales'), el('th', {}, 'Median'), el('th', {}, 'Average'), el('th', {}, 'Listing'))));
@@ -420,11 +430,11 @@ function renderTable() {
   for (const m of months.slice(0, tableAll ? undefined : 12)) {
     const r = rows.get(m), e = lst.get(m);
     tb.append(el('tr', { onclick: () => openEntry({ suburb: v.name, month: m }) },
-      el('td', {}, fmtMonthShort(m), isProvisional(m) ? '*' : ''), el('td', {}, r ? r.n : 0),
+      el('td', {}, fmtMonthShort(m), isProvisional(m) ? '*' : ''), el('td', {}, r ? r.n : 0, r && r.early ? el('span', { class: 'early-n' }, ` (${r.early} alert)`) : ''),
       td(r ? r.median : null), td(r ? r.avg : null), td(e ? e.avgListing : null)));
   }
   if (!months.length) tb.append(el('tr', {}, el('td', { colspan: 5, class: 'table-empty' }, 'No sales match these filters.')));
   tableToggle(months.length);
   t.append(tb);
-  $('#tableNote').textContent = months.length ? '* Sales for this month are still being reported. Tap a month to add your listing (asking) price.' : '';
+  $('#tableNote').textContent = months.length ? '* Sales for this month are still being reported; "alert" sales come from your sold alerts until the official records arrive. Tap a month to add your listing (asking) price.' : '';
 }

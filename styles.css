@@ -383,3 +383,9 @@ h2.collhead { margin: 0; }
 .feed-recent li.none b{color:var(--down,#c0392b)}
 
 .cards-note { grid-column: 1 / -1; margin: -2px 2px 0; font-size: .78rem; color: var(--muted); }
+
+.card.wide.early { grid-column: 1 / -1; border-style: dashed; }
+.early-n { color: var(--muted); font-size: .8em; }
+.early-note { margin-top: 6px; }
+.early-note details { margin-top: 4px; }
+.early-note ul { margin: 4px 0 0; padding-left: 18px; }
