@@ -19,7 +19,7 @@ setupCollapsers();
 
 function render() {
   renderHeader(); renderChips(); renderFilterBar(); renderSegs();
-  renderCards(); renderChart(); renderMapPanel(); renderListings(); renderTable(); renderResales(); renderSalesList(); renderWatchBar();
+  renderChart(); // also draws the headline cards for the period shown renderMapPanel(); renderListings(); renderTable(); renderResales(); renderSalesList(); renderWatchBar();
 }
 
 function renderHeader() {

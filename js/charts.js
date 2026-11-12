@@ -52,22 +52,39 @@ function buildTrends(series) {
   return out;
 }
 
-// last 3 months vs the same 3 months a year earlier
-function windowStats(list, endMonth, months = 3) {
-  const startM = addMonths(endMonth, -(months - 1));
-  const prevEnd = addMonths(endMonth, -12), prevStart = addMonths(startM, -12);
+// ---------- headline cards: the months the chart shows (complete months only) vs a comparable period ----------
+const lastCompleteMonth = () => addMonths(thisMonth(), -(PROVISIONAL_MONTHS + 1));
+// Which months the cards cover: the period picked on the chart, else the latest 3 complete months.
+function cardWindow() {
+  const L = lastCompleteMonth();
+  const picked = !!chartZoom;
+  let start = picked ? chartZoom.start : addMonths(L, -2);
+  const wantEnd = picked ? chartZoom.end : L;
+  const end = wantEnd > L ? L : wantEnd;
+  const cut = wantEnd > L ? { from: addMonths(L, 1), to: wantEnd } : null; // incomplete months left out
+  if (start > end) return { empty: true, picked, cut };
+  const len = monthDiff(start, end) + 1;
+  // up to a year: same months a year earlier (no seasonal effect); longer: the same length of time just before
+  const shift = len <= 12 ? 12 : len;
+  return { start, end, len, picked, cut, prevStart: addMonths(start, -shift), prevEnd: addMonths(end, -shift),
+    vs: len <= 12 ? 'vs same months a year before' : `vs the ${len} months before` };
+}
+// prev is null when your data doesn't reach back to the whole comparison period (a % would mislead)
+function windowStats(list, w) {
+  const first = list.length ? list[list.length - 1].m : null; // list is newest first
   return {
-    startM,
-    cur: list.filter((s) => s.m >= startM && s.m <= endMonth).map((s) => s.price),
-    prev: list.filter((s) => s.m >= prevStart && s.m <= prevEnd).map((s) => s.price),
+    cur: list.filter((s) => s.m >= w.start && s.m <= w.end).map((s) => s.price),
+    prev: first && first <= w.prevStart ? list.filter((s) => s.m >= w.prevStart && s.m <= w.prevEnd).map((s) => s.price) : null,
   };
 }
-function statCard(label, value, cmp, sub) {
+const NO_PREV = 'no earlier sales imported to compare';
+const monthsLabel = (a, b) => (a === b ? fmtMonthShort(a) : `${fmtMonthShort(a)}–${fmtMonthShort(b)}`);
+function statCard(label, value, cmp, sub, vs) {
   const pct = value != null && cmp ? ((value - cmp) / cmp) * 100 : null;
   return el('div', { class: 'card' },
     el('div', { class: 'label' }, label),
     el('div', { class: 'value' }, value == null ? '—' : fmtShort(value)),
-    el('div', { class: 'delta' }, pct != null ? [el('span', { class: pct >= 0 ? 'up' : 'down' }, `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%`), ' vs year before'] : sub || ''));
+    el('div', { class: 'delta' }, pct != null ? [el('span', { class: pct >= 0 ? 'up' : 'down' }, `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%`), ` ${vs}`] : sub || ''));
 }
 
 function renderCards() {
@@ -79,25 +96,36 @@ function renderCards() {
       el('button', { class: 'primary', style: 'margin-top:10px', onclick: () => $('#menuBtn').click() }, 'Import sales files')));
     return;
   }
-  const end = addMonths(thisMonth(), -1);
+  const w = cardWindow();
+  const cutNote = w.cut ? `${monthsLabel(w.cut.from, w.cut.to)} left out: sales still being reported` : '';
+  if (w.empty) {
+    box.className = 'cards compare';
+    box.append(el('div', { class: 'card wide' }, el('div', { class: 'label' }, 'No complete months in this period'),
+      el('div', { class: 'delta' }, `${cutNote}. Pick a period that ends by ${fmtMonthShort(lastCompleteMonth())}.`)));
+    return;
+  }
+  const when = monthsLabel(w.start, w.end);
+  const title = w.picked ? `Your period · ${when}` : `Latest complete months · ${when}`;
   if (prefs.view === COMPARE) {
     box.className = 'cards compare';
     const fn = prefs.metric === 'avg' ? mean : median;
     for (const v of views) {
-      const w = windowStats(salesFor(v), end);
-      const c = statCard(v.name, fn(w.cur), fn(w.prev), `${w.cur.length} sales`);
+      const st = windowStats(salesFor(v), w);
+      const c = statCard(v.name, fn(st.cur), st.prev && fn(st.prev), `${st.cur.length} sales${st.prev ? '' : ` · ${NO_PREV}`}`, w.vs);
       c.querySelector('.label').prepend(el('span', { class: 'dot', style: `background:${viewColor(v)}` }));
       box.append(c);
     }
+    box.append(el('p', { class: 'cards-note' }, `${prefs.metric === 'avg' ? 'Average' : 'Median'} sold, ${title.toLowerCase()}, ${w.vs}.${cutNote ? ` ${cutNote}.` : ''}`));
     return;
   }
   box.className = 'cards';
-  const w = windowStats(salesFor(currentView()), end);
+  const st = windowStats(salesFor(currentView()), w);
   box.append(
-    statCard(`Median sold · ${fmtMonthShort(w.startM)}–${fmtMonthShort(end)}`, median(w.cur), median(w.prev), `${w.cur.length} sales`),
-    statCard('Average sold', mean(w.cur), mean(w.prev)),
-    el('div', { class: 'card' }, el('div', { class: 'label' }, 'Sales, last 3 mths'), el('div', { class: 'value' }, String(w.cur.length)),
-      el('div', { class: 'delta' }, `${w.prev.length} a year before`)));
+    statCard('Median sold', median(st.cur), st.prev && median(st.prev), st.prev ? `${st.cur.length} sales` : NO_PREV, w.vs),
+    statCard('Average sold', mean(st.cur), st.prev && mean(st.prev), st.prev ? '' : NO_PREV, w.vs),
+    el('div', { class: 'card' }, el('div', { class: 'label' }, 'Sales'), el('div', { class: 'value' }, st.cur.length.toLocaleString('en-AU')),
+      el('div', { class: 'delta' }, st.prev ? `${st.prev.length.toLocaleString('en-AU')} ${w.len <= 12 ? 'same months a year before' : `in the ${w.len} months before`}` : NO_PREV)),
+    el('p', { class: 'cards-note' }, `${title}${cutNote ? ` · ${cutNote}` : ''}`));
 }
 
 function niceTicks(min, max, count = 4) {
@@ -155,6 +183,7 @@ function renderChart() {
     else for (const s of series) s.points = s.points.filter((p) => p.month >= start && p.month <= end);
   }
   const nonEmpty = series.filter((s) => s.points.length);
+  renderCards(); // the cards follow the period shown on the chart
   if (!nonEmpty.length) {
     chartGeo = null; $('#chartPeriod').hidden = true;
     box.append(el('div', { class: 'empty' }, N ? 'Not enough sales match these filters to chart. Try a wider area, more property types or a bigger price range.' : 'No data to chart yet.'));

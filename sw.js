@@ -1,6 +1,6 @@
 // Offline support. Always asks the server for the latest files (bypassing the browser's own
 // cache), and only falls back to the saved copies when offline. Bump VERSION with APP_VERSION.
-const VERSION = 'nr-prices-34';
+const VERSION = 'nr-prices-35';
 const FILES = ['./', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/core.js', 'js/sales-data.js', 'js/geo.js', 'js/idb.js', 'js/import-sales.js', 'js/screen.js', 'js/charts.js', 'js/flood.js', 'js/listings.js', 'js/listing-insights.js', 'js/alert-feed.js', 'js/market.js', 'js/resales.js', 'js/maps.js', 'js/filters.js', 'js/listing-entry.js', 'js/menu.js', 'js/main.js',
   'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
