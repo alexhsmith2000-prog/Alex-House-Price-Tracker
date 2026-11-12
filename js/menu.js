@@ -21,13 +21,15 @@ $('#clearFlood').addEventListener('click', async () => {
   derive(); render(); renderFloodStatus();
 });
 $('#importZip').addEventListener('change', async (ev) => { const files = ev.target.files; await importZipFiles(files); ev.target.value = ''; });
-$('#copyList').addEventListener('click', async () => {
-  const list = missingFiles();
+$('#missingCopy').addEventListener('click', () => copyMissingLinks(overdueFiles()));
+$('#missingLater').addEventListener('click', () => { try { sessionStorage.setItem('nr-prices.missingLater', overdueFiles().join(' ')); } catch { /* ignore */ } $('#missingBar').hidden = true; });
+$('#copyList').addEventListener('click', () => copyMissingLinks(missingFiles()));
+async function copyMissingLinks(list) {
   if (!list.length) return toast('Nothing to download: you are up to date');
   const text = list.join('\n');
   try { await navigator.clipboard.writeText(text); toast(`Copied ${list.length} download links. Now run the “NR Prices catch-up” shortcut.`); }
-  catch { const ta = $('#copyFallback'); ta.hidden = false; ta.value = text; ta.select(); toast('Select all and copy the links below'); }
-});
+  catch { $('#menuBtn').click(); const ta = $('#copyFallback'); ta.hidden = false; ta.value = text; ta.select(); toast('Select all and copy the links below'); }
+}
 $('#clearImported').addEventListener('click', async () => {
   if (!N) return toast('No imported sales to delete');
   if (!confirm('Delete all sales imported on this phone? You can import the files again later.')) return;

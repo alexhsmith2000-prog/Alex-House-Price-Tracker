@@ -144,6 +144,31 @@ function missingFiles() {
   return urls;
 }
 
+// Files that should have arrived by now: everything missing except this week's file until Wednesday
+// (it's published on Monday and the weekly shortcut runs on Tuesday morning).
+function overdueFiles() {
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return missingFiles().filter((u) => {
+    const m = u.match(/weekly\/(\d{4})(\d{2})(\d{2})\.zip$/);
+    return !m || (today - Date.UTC(+m[1], +m[2] - 1, +m[3])) / 864e5 >= 2;
+  });
+}
+// Banner on the main screen when sales files are missing (shown again if the list changes after "Later")
+function renderMissingBar() {
+  const bar = $('#missingBar'); if (!bar) return;
+  const list = N ? overdueFiles() : [];
+  let later = ''; try { later = sessionStorage.getItem('nr-prices.missingLater') || ''; } catch { /* ignore */ }
+  bar.hidden = !list.length || later === list.join(' ');
+  if (bar.hidden) return;
+  const weeks = list.map((u) => (u.match(/weekly\/(\d{8})\.zip$/) || [])[1]).filter(Boolean).sort();
+  const years = list.map((u) => (u.match(/yearly\/(\d{4})\.zip$/) || [])[1]).filter(Boolean);
+  const parts = [];
+  if (weeks.length) parts.push(weeks.length === 1 ? `the sales file for the week of ${fmtDate(weeks[0])} is missing` : `${weeks.length} weekly sales files are missing (latest: week of ${fmtDate(weeks[weeks.length - 1])})`);
+  if (years.length) parts.push(`${years.length === 1 ? `the ${years[0]} yearly file is` : `yearly files ${years.join(', ')} are`} missing`);
+  const txt = parts.join(', and ');
+  $('#missingText').textContent = `${txt[0].toUpperCase()}${txt.slice(1)}. Tap Copy links, run the “NR Prices catch-up” shortcut, then ⋯ → Import sales files.`;
+}
 function renderImportStatus() {
   const box = $('#importStatus'); if (!box) return;
   const n = N;

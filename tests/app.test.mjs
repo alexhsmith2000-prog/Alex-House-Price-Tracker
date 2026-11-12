@@ -229,7 +229,7 @@ test('the screen redraw calls every section (none commented out)', async () => {
   const src = await readFile(new URL('../js/screen.js', import.meta.url), 'utf8');
   const body = src.slice(src.indexOf('function render()'), src.indexOf('\n}', src.indexOf('function render()')))
     .replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  for (const fn of ['renderChart', 'renderMapPanel', 'renderListings', 'renderTable', 'renderResales', 'renderSalesList', 'renderWatchBar'])
+  for (const fn of ['renderChart', 'renderMapPanel', 'renderListings', 'renderTable', 'renderResales', 'renderSalesList', 'renderWatchBar', 'renderMissingBar'])
     assert.ok(new RegExp(`\\b${fn}\\(\\)`).test(body), `render() should call ${fn}()`);
 });
 
@@ -271,4 +271,13 @@ test('collector: receives weekly sales files from the Shortcut and hands them to
   assert.equal(got.ok, true);
   assert.equal(Buffer.from(got.data, 'base64').subarray(0, 2).toString(), 'PK');
   assert.equal(Buffer.from(got.data, 'base64').length, 2002);
+});
+
+test('missing sales files: this week only counts as missing from Wednesday', () => {
+  app("var RealDate = Date; var realMissing = missingFiles; missingFiles = () => ['https://x/__psi/yearly/2025.zip', 'https://x/__psi/weekly/20261102.zip', 'https://x/__psi/weekly/20261109.zip']; 0");
+  const on = (iso) => { app(`Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super('${iso}'); } }; 0`); return plain(app('overdueFiles()')).map((u) => u.split('/').pop()); };
+  try {
+    assert.deepEqual(on('2026-11-10T09:00:00'), ['2025.zip', '20261102.zip']);                 // Tuesday: Monday's file not overdue yet
+    assert.deepEqual(on('2026-11-11T09:00:00'), ['2025.zip', '20261102.zip', '20261109.zip']); // Wednesday: it is
+  } finally { app('Date = RealDate; missingFiles = realMissing; 0'); }
 });
